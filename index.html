@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>위탁종합 계좌 잔고 | QQQ 퀀트 포트폴리오</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        * { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif; }
+        body { background-color: #0A0F1D; }
+        .mts-card {
+            background: #111827;
+            border: 1px solid #1F2937;
+        }
+        .mts-subcard {
+            background: #162032;
+            border: 1px solid #243044;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen pb-16 antialiased selection:bg-rose-500 selection:text-white">
+
+    <!-- 1. 증권사 MTS 상단 헤더 바 -->
+    <header class="sticky top-0 z-50 bg-[#0A0F1D]/90 backdrop-blur-md border-b border-slate-800 px-4 py-3">
+        <div class="max-w-md mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-rose-600 to-indigo-600 flex items-center justify-center font-black text-white text-xs shadow-md shadow-rose-900/30">
+                    MTS
+                </div>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-bold text-slate-200">위탁종합 (해외)</span>
+                        <span class="text-[10px] text-slate-400">112-92-****01</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400 flex items-center gap-1">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>2026년 10월 01일 기준 (자동갱신)</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">실시간 USD 운용</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 대시보드 컨테이너 -->
+    <main class="max-w-md mx-auto px-4 mt-3.5 space-y-3.5">
+
+        <!-- 2. 총 자산 평가 요약 카드 (MTS 최상단 메인) -->
+        <div class="mts-card rounded-2xl p-4 shadow-xl">
+            <div class="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>총 평가금액 (KRW)</span>
+                <span class="text-[11px] bg-rose-500/10 text-rose-400 font-bold px-2 py-0.5 rounded-full border border-rose-500/20">
+                    초기원금 500만원
+                </span>
+            </div>
+            
+            <div class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mt-0.5">
+                ₩363,687,738
+            </div>
+
+            <div class="flex items-center gap-2 mt-2 text-xs">
+                <span class="text-rose-400 font-black text-sm">+6,054.20%</span>
+                <span class="text-rose-400 font-bold">(+₩358,687,738)</span>
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-semibold ml-auto">
+                    61.5배 달성
+                </span>
+            </div>
+
+            <!-- 세부 환산 박스 -->
+            <div class="mts-subcard rounded-xl p-3 mt-3.5 grid grid-cols-2 gap-2 text-xs">
+                <div>
+                    <span class="text-[11px] text-slate-400 block">총 자산 (USD)</span>
+                    <span class="font-bold text-slate-200 text-sm">$268,040.26</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-[11px] text-slate-400 block">초기 투자 환산액</span>
+                    <span class="font-bold text-slate-400 text-sm">$4,355.40</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 외화 예수금 카드 (USD 현금) -->
+        <div class="mts-card rounded-2xl p-4 shadow-lg">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-slate-300">
+                    <i data-lucide="wallet" class="w-4 h-4 text-emerald-400"></i>
+                    <span>외화 예수금 (USD 현금)</span>
+                </div>
+                <span class="text-xs font-bold text-emerald-400">비중 53.7%</span>
+            </div>
+
+            <div class="flex items-baseline justify-between mt-1">
+                <div class="text-xl font-black text-emerald-400">
+                    $143,961.78
+                </div>
+                <div class="text-xs text-slate-400">
+                    약 ₩195,333,090
+                </div>
+            </div>
+
+            <div class="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                <span>적용 환율 (USDKRW)</span>
+                <span class="font-semibold text-slate-300">₩1,356.84 / USD</span>
+            </div>
+        </div>
+
+        <!-- 4. 오늘의 주문 가이드 (핵심 시그널 카드) -->
+        <div class="mts-card rounded-2xl p-4 border border-indigo-500/30 shadow-lg relative overflow-hidden">
+            <div class="absolute -right-8 -top-8 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none"></div>
+
+            <div class="flex items-center justify-between mb-2.5">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
+                    <i data-lucide="compass" class="w-4 h-4"></i>
+                    <span>오늘의 주문 가이드 (Strategy Signal)</span>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border-blue-500/30">
+                    관망 및 현금 대기 중
+                </span>
+            </div>
+
+            <!-- QQQ 상태 지표 배지 그리드 -->
+            <div class="grid grid-cols-2 gap-2 my-2.5">
+                <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
+                    <span class="text-[10px] text-slate-400 block">QQQ 고점 대비 낙폭 (DD)</span>
+                    <span class="text-sm font-black text-rose-400">-0.84%</span>
+                </div>
+                <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
+                    <span class="text-[10px] text-slate-400 block">QQQ 60월선 이격도</span>
+                    <span class="text-sm font-black text-indigo-400">+65.58%</span>
+                </div>
+            </div>
+
+            <!-- 행동 요약 설명 -->
+            <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                <p class="font-bold text-white flex items-center gap-1.5 mb-0.5">
+                    <i data-lucide="shield" class="w-3.5 h-3.5 text-indigo-400"></i>
+                    <span>관망 및 현금 대기 중</span>
+                </p>
+                <p class="text-[11px] text-slate-400 mt-1">QQQ 고점 대비 낙폭이 -10% 미만(-0.84%)으로 안정 구간입니다. 신규 매수 없이 대기합니다.</p>
+            </div>
+        </div>
+
+        <!-- 5. 보유 종목 카드 (TQQQ) -->
+        <div class="mts-card rounded-2xl p-4 shadow-lg">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-1.5">
+                    <span class="font-extrabold text-white text-base">TQQQ</span>
+                    <span class="text-[11px] text-slate-400">ProShares UltraPro QQQ</span>
+                </div>
+                <span class="text-xs font-bold text-indigo-400">비중 46.3%</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-800 text-xs">
+                <div>
+                    <span class="text-[11px] text-slate-400 block">보유 수량</span>
+                    <span class="font-black text-white text-sm">1576 주</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-[11px] text-slate-400 block">현재가 (USD)</span>
+                    <span class="font-black text-white text-sm">$78.73</span>
+                </div>
+                <div>
+                    <span class="text-[11px] text-slate-400 block">평균 매입단가</span>
+                    <span class="font-bold text-slate-300 text-xs">$21.58</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-[11px] text-slate-400 block">수익률</span>
+                    <span class="font-bold text-rose-400 text-xs">+264.84%</span>
+                </div>
+            </div>
+
+            <div class="mts-subcard rounded-xl p-3 mt-3 flex items-center justify-between text-xs">
+                <div>
+                    <span class="text-[10px] text-slate-400 block">평가 금액</span>
+                    <span class="font-extrabold text-white text-sm">₩168,354,648</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-[10px] text-slate-400 block">평가 손익 (USD)</span>
+                    <span class="font-bold text-rose-400 text-xs">+$90,069.20</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. 최근 체결 내역 리스트 (MTS 하단 체결내역 탭) -->
+        <div class="mts-card rounded-2xl p-4 shadow-lg">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                    <i data-lucide="receipt" class="w-4 h-4 text-slate-400"></i>
+                    <span>최근 체결 내역 (최근 10건)</span>
+                </div>
+                <span class="text-[10px] text-slate-400">총 398회 체결</span>
+            </div>
+
+            <div class="divide-y divide-slate-800/80">
+                
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-08-04</span>
+                </div>
+                <p class="text-[11px] text-slate-400">1순위 반등 분할 매도 (QQQ -5% 이내 회복)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-23주</div>
+                <div class="text-[11px] text-slate-400">@ $74.68</div>
+                <div class="text-[10px] text-slate-400">체결 $1,717.54</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>
+                    <span class="font-bold text-white text-[13px]">2026-07-29</span>
+                </div>
+                <p class="text-[11px] text-slate-400">하락장 분할 매수 1주 (QQQ DD -11.5%)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-rose-400 font-bold text-sm">+1주</div>
+                <div class="text-[11px] text-slate-400">@ $57.64</div>
+                <div class="text-[10px] text-slate-400">체결 $57.64</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-06-02</span>
+                </div>
+                <p class="text-[11px] text-slate-400">3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-153주</div>
+                <div class="text-[11px] text-slate-400">@ $86.85</div>
+                <div class="text-[10px] text-slate-400">체결 $13,288.31</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-05-14</span>
+                </div>
+                <p class="text-[11px] text-slate-400">3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-160주</div>
+                <div class="text-[11px] text-slate-400">@ $78.62</div>
+                <div class="text-[10px] text-slate-400">체결 $12,578.66</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-05-06</span>
+                </div>
+                <p class="text-[11px] text-slate-400">3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-165주</div>
+                <div class="text-[11px] text-slate-400">@ $71.27</div>
+                <div class="text-[10px] text-slate-400">체결 $11,759.18</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-04-30</span>
+                </div>
+                <p class="text-[11px] text-slate-400">3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-176주</div>
+                <div class="text-[11px] text-slate-400">@ $63.27</div>
+                <div class="text-[10px] text-slate-400">체결 $11,135.82</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2026-04-08</span>
+                </div>
+                <p class="text-[11px] text-slate-400">1순위 반등 분할 매도 (QQQ -5% 이내 회복)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-34주</div>
+                <div class="text-[11px] text-slate-400">@ $47.80</div>
+                <div class="text-[10px] text-slate-400">체결 $1,625.11</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>
+                    <span class="font-bold text-white text-[13px]">2026-03-30</span>
+                </div>
+                <p class="text-[11px] text-slate-400">하락장 분할 매수 1주 (QQQ DD -12.2%)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-rose-400 font-bold text-sm">+1주</div>
+                <div class="text-[11px] text-slate-400">@ $37.73</div>
+                <div class="text-[10px] text-slate-400">체결 $37.73</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>
+                    <span class="font-bold text-white text-[13px]">2026-03-27</span>
+                </div>
+                <p class="text-[11px] text-slate-400">하락장 분할 매수 1주 (QQQ DD -11.5%)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-rose-400 font-bold text-sm">+1주</div>
+                <div class="text-[11px] text-slate-400">@ $38.62</div>
+                <div class="text-[10px] text-slate-400">체결 $38.62</div>
+            </div>
+        </div>
+        
+        <div class="py-3.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>
+                    <span class="font-bold text-white text-[13px]">2025-10-27</span>
+                </div>
+                <p class="text-[11px] text-slate-400">3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)</p>
+            </div>
+            <div class="text-right space-y-0.5">
+                <div class="text-blue-400 font-bold text-sm">-179주</div>
+                <div class="text-[11px] text-slate-400">@ $57.78</div>
+                <div class="text-[10px] text-slate-400">체결 $10,343.16</div>
+            </div>
+        </div>
+        
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 하단 고정 정보 바 -->
+    <footer class="max-w-md mx-auto text-center text-slate-400 text-[11px] py-6 px-4">
+        <p>TQQQ Quantitative Asset Allocation Engine • GitHub Pages Automated</p>
+        <p class="mt-1 text-[10px]">시작일 2010.03.01 (초기 500만원) ~ 현재</p>
+    </footer>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>
