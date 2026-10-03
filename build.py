@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-build.py - 2025년 1월 7일부터 현재까지 TQQQ 퀀트 자산배분 매매 시뮬레이션 및
-GitHub Pages 배포용 증권사 MTS 스타일 index.html 자동 생성 파이프라인 (계좌 잔고 / 전체 체결내역 탭 지원)
+build.py - QQQ-TQQQ (나스닥 3X) & SOXX-SOXL (반도체 3X) 듀얼 계좌 퀀트 자산배분 매매 시뮬레이션 및
+GitHub Pages 배포용 증권사 MTS 스타일 멀티 계좌 index.html 자동 생성 파이프라인
 """
 
 import os
@@ -12,148 +12,129 @@ import numpy as np
 import yfinance as yf
 
 # ---------------------------------------------------------
-# 1. 시세 데이터 수집 및 전처리
+# 1. 단일 전략 시뮬레이션 엔진 (공통 함수)
 # ---------------------------------------------------------
-def fetch_market_data(start_date="2025-01-07"):
-    print(f"[1/4] yfinance 시세 데이터 수집 중 (QQQ, TQQQ, USDKRW=X, 시작 기준: {start_date})...")
+def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07"):
+    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date}...")
     
-    # 60개월 이평선(1,260영업일) 및 사상 최고가(ATH) 계산을 위해 QQQ는 과거 데이터부터 충분히 수집
-    qqq = yf.download("QQQ", start="2004-01-01", progress=False)
-    tqqq = yf.download("TQQQ", start="2010-02-11", progress=False)
-    fx = yf.download("USDKRW=X", start="2010-01-01", progress=False)
+    # 1) 시세 데이터 수집 (60개월 이평선 산출을 위해 2004년부터)
+    sig_df = yf.download(signal_ticker, start="2004-01-01", progress=False)
+    tgt_df = yf.download(target_ticker, start="2010-01-01", progress=False)
+    fx_df = yf.download("USDKRW=X", start="2010-01-01", progress=False)
 
-    # MultiIndex 컬럼 평탄화 (yfinance 최신버전 대응)
-    for df in [qqq, tqqq, fx]:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+    # MultiIndex 컬럼 평탄화
+    for d in [sig_df, tgt_df, fx_df]:
+        if isinstance(d.columns, pd.MultiIndex):
+            d.columns = d.columns.get_level_values(0)
 
-    # QQQ 지표 산출
-    # 1) 사상 최고가 (ATH)
-    qqq['ATH'] = qqq['High'].cummax()
-    # 2) 고점 대비 하락률 (DD %)
-    qqq['DD'] = (qqq['Close'] - qqq['ATH']) / qqq['ATH'] * 100.0
-    # 3) 60개월 (1,260영업일) 이동평균선 및 이격도 (%)
-    qqq['MA1260'] = qqq['Close'].rolling(window=1260).mean()
-    qqq['Disparity'] = ((qqq['Close'] / qqq['MA1260']) - 1.0) * 100.0
+    # 2) 신호 종목 지표 산출
+    sig_df['ATH'] = sig_df['High'].cummax()
+    sig_df['DD'] = (sig_df['Close'] - sig_df['ATH']) / sig_df['ATH'] * 100.0
+    sig_df['MA1260'] = sig_df['Close'].rolling(window=1260).mean()
+    sig_df['Disparity'] = ((sig_df['Close'] / sig_df['MA1260']) - 1.0) * 100.0
 
-    # 2026-01-07 이후 유효 날짜 인덱스 추출
-    avail_dates = tqqq.loc[tqqq.index >= start_date].index
+    # 3) 시작일 이후 데이터 결합
+    avail_dates = tgt_df.loc[tgt_df.index >= start_date].index
     if len(avail_dates) == 0:
-        print(f"Warning: {start_date} 이후 데이터가 충분치 않아 가장 최근 데이터를 기준으로 설정합니다.")
-        avail_dates = tqqq.index[-100:]
+        avail_dates = tgt_df.index[-100:]
 
     dates = avail_dates
-    
-    df_merged = pd.DataFrame(index=dates)
-    df_merged['QQQ_Close'] = qqq['Close'].reindex(dates).ffill()
-    df_merged['QQQ_High'] = qqq['High'].reindex(dates).ffill()
-    df_merged['QQQ_ATH'] = qqq['ATH'].reindex(dates).ffill()
-    df_merged['QQQ_DD'] = qqq['DD'].reindex(dates).ffill()
-    df_merged['QQQ_MA1260'] = qqq['MA1260'].reindex(dates).ffill()
-    df_merged['QQQ_Disparity'] = qqq['Disparity'].reindex(dates).fillna(0.0)
-    
-    df_merged['TQQQ_Close'] = tqqq['Close'].reindex(dates).ffill()
-    df_merged['USDKRW'] = fx['Close'].reindex(dates).ffill()
+    df = pd.DataFrame(index=dates)
+    df['Sig_Close'] = sig_df['Close'].reindex(dates).ffill()
+    df['Sig_High'] = sig_df['High'].reindex(dates).ffill()
+    df['Sig_ATH'] = sig_df['ATH'].reindex(dates).ffill()
+    df['Sig_DD'] = sig_df['DD'].reindex(dates).ffill()
+    df['Sig_MA1260'] = sig_df['MA1260'].reindex(dates).ffill()
+    df['Sig_Disparity'] = sig_df['Disparity'].reindex(dates).fillna(0.0)
 
-    # 결측치 최종 정리
-    df_merged = df_merged.dropna(subset=['TQQQ_Close', 'QQQ_Close'])
-    df_merged['USDKRW'] = df_merged['USDKRW'].bfill().ffill()
+    df['Tgt_Close'] = tgt_df['Close'].reindex(dates).ffill()
+    df['USDKRW'] = fx_df['Close'].reindex(dates).ffill()
+
+    df = df.dropna(subset=['Tgt_Close', 'Sig_Close'])
+    df['USDKRW'] = df['USDKRW'].bfill().ffill()
 
     # 월말 영업일 여부 마킹
-    df_merged['YearMonth'] = df_merged.index.to_period('M')
-    month_last_dates = df_merged.groupby('YearMonth').apply(lambda x: x.index[-1]).values
-    df_merged['Is_Month_End'] = df_merged.index.isin(month_last_dates)
+    df['YearMonth'] = df.index.to_period('M')
+    month_last_dates = df.groupby('YearMonth').apply(lambda x: x.index[-1]).values
+    df['Is_Month_End'] = df.index.isin(month_last_dates)
 
-    print(f" -> 수집 완료: 총 {len(df_merged)} 영업일 데이터 ({df_merged.index[0].strftime('%Y-%m-%d')} ~ {df_merged.index[-1].strftime('%Y-%m-%d')})")
-    return df_merged
-
-
-# ---------------------------------------------------------
-# 2. 퀀트 매매 및 자산 배분 백테스트 시뮬레이션
-# ---------------------------------------------------------
-def run_simulation(df):
-    print(f"[2/4] 퀀트 자산배분 매매 시뮬레이션 실행 중 ({df.index[0].strftime('%Y-%m-%d')} ~ 현재)...")
-
-    # 기본 자본 설정
+    # 4) 자본 및 상태 머신 설정
     INITIAL_KRW = 5_000_000.0
     init_fx = float(df['USDKRW'].iloc[0])
     INITIAL_USD = INITIAL_KRW / init_fx
 
     usd_cash = INITIAL_USD
-    tqqq_shares = 0
-    tqqq_avg_price = 0.0
+    shares = 0
+    avg_price = 0.0
 
-    trades = [] # 전체 체결 내역
+    trades = []
     daily_history = []
 
-    # 상태 머신 변수들
     cycle_in_dd10 = False
     rebound_sold = False
-    cycle_bought_shares = 0  # 하락장(-10% 이하) 진입 후 추가 매수한 누적 주수
-    rebalance_tier = 0  # 0: 평시, 1: -15% 리밸런싱 완료, 2: -20% 리밸런싱 완료
+    cycle_bought_shares = 0
+    rebalance_tier = 0
     principal_recovered = False
     lock_base_value = None
 
-    # Day 1 진입 규칙: 2,500,000 KRW 상당의 USD로 TQQQ 정수 주수 즉시 1회 매수
+    # Day 1 초기 진입
     day1_date = df.index[0]
-    day1_tqqq_price = float(df['TQQQ_Close'].iloc[0])
+    day1_price = float(df['Tgt_Close'].iloc[0])
     day1_fx = float(df['USDKRW'].iloc[0])
     day1_buy_usd_target = 2_500_000.0 / day1_fx
-    day1_shares = int(day1_buy_usd_target // day1_tqqq_price)
+    day1_shares = int(day1_buy_usd_target // day1_price)
 
     if day1_shares > 0:
-        cost = day1_shares * day1_tqqq_price
+        cost = day1_shares * day1_price
         usd_cash -= cost
-        tqqq_shares += day1_shares
-        tqqq_avg_price = day1_tqqq_price
+        shares += day1_shares
+        avg_price = day1_price
         trades.append({
             "date": day1_date.strftime("%Y-%m-%d"),
             "type": "매수",
-            "reason": "Day 1 초기 진입 (원화 250만 원 상당 정수 매수)",
+            "reason": f"Day 1 초기 진입 (원화 250만 원 상당 정수 매수)",
+            "ticker": target_ticker,
             "shares": day1_shares,
-            "price": day1_tqqq_price,
+            "price": day1_price,
             "amount_usd": cost,
             "amount_krw": cost * day1_fx,
             "cash_after": usd_cash
         })
 
-    # 매 영업일 시뮬레이션 순회
+    # 5) 일별 시뮬레이션 루프
     for idx, (dt, row) in enumerate(df.iterrows()):
-        tqqq_p = float(row['TQQQ_Close'])
-        qqq_dd = float(row['QQQ_DD'])
-        disparity = float(row['QQQ_Disparity'])
+        tgt_p = float(row['Tgt_Close'])
+        sig_dd = float(row['Sig_DD'])
+        disparity = float(row['Sig_Disparity'])
         fx_val = float(row['USDKRW'])
         is_m_end = bool(row['Is_Month_End'])
         dt_str = dt.strftime("%Y-%m-%d")
 
-        total_equity_usd = usd_cash + (tqqq_shares * tqqq_p)
+        total_equity_usd = usd_cash + (shares * tgt_p)
         total_return_pct = ((total_equity_usd / INITIAL_USD) - 1.0) * 100.0
 
-        # Day 1 첫날은 이미 초기매수를 진행했으므로 상태 갱신만 수행
         if idx > 0:
-            # 1) 사이클 상태 갱신 (State Machine)
-            if qqq_dd >= -0.5:
+            # 사이클 상태 갱신
+            if sig_dd >= -0.5:
                 cycle_in_dd10 = False
                 rebound_sold = False
                 cycle_bought_shares = 0
                 rebalance_tier = 0
-            elif qqq_dd <= -10.0:
+            elif sig_dd <= -10.0:
                 cycle_in_dd10 = True
 
             sold_today = False
 
             # [1순위 - 반등 분할 매도]
-            # 하락장(-10% 이하)에서 추가 매수한 주수(cycle_bought_shares)만 매도 대상
-            # 단, TQQQ 주식 총 평가액이 250만 원 이상(수익 상태)일 때만 매도 집행 (250만원 미만 시 매도 보류)
-            if cycle_in_dd10 and (qqq_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (tqqq_shares > 0):
-                min_tqqq_keep_usd = 2_500_000.0 / fx_val
-                cur_tqqq_eval_usd = tqqq_shares * tqqq_p
-                if cur_tqqq_eval_usd >= min_tqqq_keep_usd:
-                    sell_shares = min(tqqq_shares, cycle_bought_shares)
+            if cycle_in_dd10 and (sig_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
+                min_keep_usd = 2_500_000.0 / fx_val
+                cur_eval_usd = shares * tgt_p
+                if cur_eval_usd >= min_keep_usd:
+                    sell_shares = min(shares, cycle_bought_shares)
                     if sell_shares > 0:
-                        sold_amount = sell_shares * tqqq_p
+                        sold_amount = sell_shares * tgt_p
                         usd_cash += sold_amount
-                        tqqq_shares -= sell_shares
+                        shares -= sell_shares
                         cycle_bought_shares = 0
                         rebound_sold = True
                         sold_today = True
@@ -161,156 +142,158 @@ def run_simulation(df):
                             "date": dt_str,
                             "type": "매도",
                             "reason": f"1순위 반등 분할 매도 (하락장 추가 매수분 {sell_shares}주 익절 매도)",
+                            "ticker": target_ticker,
                             "shares": sell_shares,
-                            "price": tqqq_p,
+                            "price": tgt_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
 
             # [2순위 - 원금 회수]
-            elif (not principal_recovered) and (total_return_pct >= 200.0) and (tqqq_shares > 0):
+            elif (not principal_recovered) and (total_return_pct >= 200.0) and (shares > 0):
                 recover_target_usd = INITIAL_USD
-                sell_shares = min(tqqq_shares, int(recover_target_usd // tqqq_p))
+                sell_shares = min(shares, int(recover_target_usd // tgt_p))
                 if sell_shares > 0:
-                    sold_amount = sell_shares * tqqq_p
+                    sold_amount = sell_shares * tgt_p
                     usd_cash += sold_amount
-                    tqqq_shares -= sell_shares
+                    shares -= sell_shares
                     principal_recovered = True
                     sold_today = True
                     trades.append({
                         "date": dt_str,
                         "type": "매도",
-                        "reason": "2순위 원금 회수 (누적 수익률 +200% 달성)",
+                        "reason": f"2순위 원금 회수 (누적 수익률 +200% 달성)",
+                        "ticker": target_ticker,
                         "shares": sell_shares,
-                        "price": tqqq_p,
+                        "price": tgt_p,
                         "amount_usd": sold_amount,
                         "amount_krw": sold_amount * fx_val,
                         "cash_after": usd_cash
                     })
 
             # [3순위 - 총액고정법]
-            elif principal_recovered and (tqqq_shares > 0):
+            elif principal_recovered and (shares > 0):
                 if (lock_base_value is None) and (total_return_pct >= 300.0):
                     lock_base_value = total_equity_usd
                 elif lock_base_value is not None and (total_equity_usd >= lock_base_value * 1.05):
                     excess_usd = lock_base_value * 0.05
-                    sell_shares = min(tqqq_shares, int(excess_usd // tqqq_p))
+                    sell_shares = min(shares, int(excess_usd // tgt_p))
                     if sell_shares > 0:
-                        sold_amount = sell_shares * tqqq_p
+                        sold_amount = sell_shares * tgt_p
                         usd_cash += sold_amount
-                        tqqq_shares -= sell_shares
-                        lock_base_value = usd_cash + (tqqq_shares * tqqq_p)
+                        shares -= sell_shares
+                        lock_base_value = usd_cash + (shares * tgt_p)
                         sold_today = True
                         trades.append({
                             "date": dt_str,
                             "type": "매도",
-                            "reason": "3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)",
+                            "reason": f"3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)",
+                            "ticker": target_ticker,
                             "shares": sell_shares,
-                            "price": tqqq_p,
+                            "price": tgt_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
 
             # [상시 - 월봉 이격도 과열 매도]
-            if (not sold_today) and is_m_end and (disparity >= 50.0) and (tqqq_shares > 0):
-                target_tqqq_usd = total_equity_usd * 0.70
-                cur_tqqq_usd = tqqq_shares * tqqq_p
-                if cur_tqqq_usd > target_tqqq_usd:
-                    excess_usd = cur_tqqq_usd - target_tqqq_usd
-                    sell_shares = int(excess_usd // tqqq_p)
+            if (not sold_today) and is_m_end and (disparity >= 50.0) and (shares > 0):
+                target_stock_usd = total_equity_usd * 0.70
+                cur_stock_usd = shares * tgt_p
+                if cur_stock_usd > target_stock_usd:
+                    excess_usd = cur_stock_usd - target_stock_usd
+                    sell_shares = int(excess_usd // tgt_p)
                     if sell_shares > 0:
-                        sold_amount = sell_shares * tqqq_p
+                        sold_amount = sell_shares * tgt_p
                         usd_cash += sold_amount
-                        tqqq_shares -= sell_shares
+                        shares -= sell_shares
                         sold_today = True
                         trades.append({
                             "date": dt_str,
                             "type": "매도",
-                            "reason": "상시 월봉 이격도 과열 조절 (7:3 리밸런싱)",
+                            "reason": f"상시 월봉 이격도 과열 조절 (7:3 리밸런싱)",
+                            "ticker": target_ticker,
                             "shares": sell_shares,
-                            "price": tqqq_p,
+                            "price": tgt_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
 
-            # 3) 하락장 매수 규칙 (당일 매도가 발생하지 않은 경우)
+            # 하락장 매수 규칙
             if not sold_today:
-                if qqq_dd > -10.0:
-                    # 0% ~ -10% 미만: 관망 / 대기
+                if sig_dd > -10.0:
                     pass
-                elif -15.0 <= qqq_dd <= -10.0:
-                    # -10% ~ -15% 구간: 가용 현금 내 매 영업일 1주씩 정량 매수
-                    if usd_cash >= tqqq_p:
-                        usd_cash -= tqqq_p
-                        tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + tqqq_p) / (tqqq_shares + 1)
-                        tqqq_shares += 1
+                elif -15.0 <= sig_dd <= -10.0:
+                    if usd_cash >= tgt_p:
+                        usd_cash -= tgt_p
+                        avg_price = ((shares * avg_price) + tgt_p) / (shares + 1)
+                        shares += 1
                         cycle_bought_shares += 1
                         trades.append({
                             "date": dt_str,
                             "type": "매수",
-                            "reason": f"하락장 분할 매수 1주 (QQQ DD {qqq_dd:.1f}%)",
+                            "reason": f"하락장 분할 매수 1주 ({signal_ticker} DD {sig_dd:.1f}%)",
+                            "ticker": target_ticker,
                             "shares": 1,
-                            "price": tqqq_p,
-                            "amount_usd": tqqq_p,
-                            "amount_krw": tqqq_p * fx_val,
+                            "price": tgt_p,
+                            "amount_usd": tgt_p,
+                            "amount_krw": tgt_p * fx_val,
                             "cash_after": usd_cash
                         })
-                elif -20.0 <= qqq_dd < -15.0:
-                    # -15% ~ -20% 구간: [TQQQ 80% : 현금 20%] 리밸런싱 (진입 시 1회)
+                elif -20.0 <= sig_dd < -15.0:
                     if rebalance_tier < 1:
-                        target_tqqq_usd = total_equity_usd * 0.80
-                        cur_tqqq_usd = tqqq_shares * tqqq_p
-                        if target_tqqq_usd > cur_tqqq_usd:
-                            needed_usd = min(usd_cash, target_tqqq_usd - cur_tqqq_usd)
-                            buy_shares = int(needed_usd // tqqq_p)
+                        target_stock_usd = total_equity_usd * 0.80
+                        cur_stock_usd = shares * tgt_p
+                        if target_stock_usd > cur_stock_usd:
+                            needed_usd = min(usd_cash, target_stock_usd - cur_stock_usd)
+                            buy_shares = int(needed_usd // tgt_p)
                             if buy_shares > 0:
-                                cost = buy_shares * tqqq_p
+                                cost = buy_shares * tgt_p
                                 usd_cash -= cost
-                                tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + cost) / (tqqq_shares + buy_shares)
-                                tqqq_shares += buy_shares
+                                avg_price = ((shares * avg_price) + cost) / (shares + buy_shares)
+                                shares += buy_shares
                                 cycle_bought_shares += buy_shares
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
-                                    "reason": f"구간 리밸런싱 8:2 비중 (QQQ DD {qqq_dd:.1f}%)",
+                                    "reason": f"구간 리밸런싱 8:2 비중 ({signal_ticker} DD {sig_dd:.1f}%)",
+                                    "ticker": target_ticker,
                                     "shares": buy_shares,
-                                    "price": tqqq_p,
+                                    "price": tgt_p,
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
                                 })
                         rebalance_tier = 1
-                elif qqq_dd < -20.0:
-                    # -20% 초과 하락 구간: [TQQQ 90% : 현금 10%] 리밸런싱 (진입 시 1회)
+                elif sig_dd < -20.0:
                     if rebalance_tier < 2:
-                        target_tqqq_usd = total_equity_usd * 0.90
-                        cur_tqqq_usd = tqqq_shares * tqqq_p
-                        if target_tqqq_usd > cur_tqqq_usd:
-                            needed_usd = min(usd_cash, target_tqqq_usd - cur_tqqq_usd)
-                            buy_shares = int(needed_usd // tqqq_p)
+                        target_stock_usd = total_equity_usd * 0.90
+                        cur_stock_usd = shares * tgt_p
+                        if target_stock_usd > cur_stock_usd:
+                            needed_usd = min(usd_cash, target_stock_usd - cur_stock_usd)
+                            buy_shares = int(needed_usd // tgt_p)
                             if buy_shares > 0:
-                                cost = buy_shares * tqqq_p
+                                cost = buy_shares * tgt_p
                                 usd_cash -= cost
-                                tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + cost) / (tqqq_shares + buy_shares)
-                                tqqq_shares += buy_shares
+                                avg_price = ((shares * avg_price) + cost) / (shares + buy_shares)
+                                shares += buy_shares
                                 cycle_bought_shares += buy_shares
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
-                                    "reason": f"구간 리밸런싱 9:1 비중 (QQQ DD {qqq_dd:.1f}%)",
+                                    "reason": f"구간 리밸런싱 9:1 비중 ({signal_ticker} DD {sig_dd:.1f}%)",
+                                    "ticker": target_ticker,
                                     "shares": buy_shares,
-                                    "price": tqqq_p,
+                                    "price": tgt_p,
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
                                 })
                         rebalance_tier = 2
 
-        # 당일 최종 자산 계산
-        final_total_usd = usd_cash + (tqqq_shares * tqqq_p)
+        final_total_usd = usd_cash + (shares * tgt_p)
         final_total_krw = final_total_usd * fx_val
 
         daily_history.append({
@@ -318,45 +301,49 @@ def run_simulation(df):
             "total_usd": final_total_usd,
             "total_krw": final_total_krw,
             "cash_usd": usd_cash,
-            "tqqq_shares": tqqq_shares,
-            "tqqq_price": tqqq_p,
+            "shares": shares,
+            "price": tgt_p,
             "fx": fx_val,
-            "qqq_dd": qqq_dd,
+            "sig_dd": sig_dd,
             "disparity": disparity
         })
 
     latest = daily_history[-1]
     last_row = df.iloc[-1]
-
-    # 오늘의 주문 가이드 판정 로직
-    cur_dd = float(last_row['QQQ_DD'])
-    cur_disp = float(last_row['QQQ_Disparity'])
+    cur_dd = float(last_row['Sig_DD'])
+    cur_disp = float(last_row['Sig_Disparity'])
 
     if cur_dd > -10.0:
         signal_title = "관망 및 현금 대기 중"
-        signal_desc = f"QQQ 고점 대비 낙폭이 -10% 미만({cur_dd:.2f}%)으로 안정 구간입니다. 신규 매수 없이 대기합니다."
+        signal_desc = f"{signal_ticker} 고점 대비 낙폭이 -10% 미만({cur_dd:.2f}%)으로 안정 구간입니다. 신규 매수 없이 대기합니다."
         signal_badge = "bg-blue-500/20 text-blue-400 border-blue-500/30"
         signal_icon = "shield"
     elif -15.0 <= cur_dd <= -10.0:
         signal_title = "매일 1주 분할 매수 구간"
-        signal_desc = f"QQQ 낙폭이 -10%~-15% 구간({cur_dd:.2f}%)입니다. 가용 현금 한도 내에서 매 영업일 TQQQ 1주씩 정량 매수합니다."
+        signal_desc = f"{signal_ticker} 낙폭이 -10%~-15% 구간({cur_dd:.2f}%)입니다. 가용 현금 내 매 영업일 {target_ticker} 1주씩 정량 매수합니다."
         signal_badge = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
         signal_icon = "shopping-cart"
     elif -20.0 <= cur_dd < -15.0:
         signal_title = "8:2 비중 리밸런싱 구간"
-        signal_desc = f"QQQ 낙폭 -15%~-20% 구간({cur_dd:.2f}%)입니다. TQQQ 80% : 현금 20% 비중으로 맞추는 집중 매수 구간입니다."
+        signal_desc = f"{signal_ticker} 낙폭 -15%~-20% 구간({cur_dd:.2f}%)입니다. {target_ticker} 80% : 현금 20% 비중으로 맞추는 집중 매수 구간입니다."
         signal_badge = "bg-amber-500/20 text-amber-400 border-amber-500/30"
         signal_icon = "layers"
     else:
         signal_title = "9:1 비중 적극 리밸런싱 구간"
-        signal_desc = f"QQQ 낙폭 -20% 초과({cur_dd:.2f}%) 대하락장입니다. TQQQ 90% : 현금 10% 비중으로 강력 리밸런싱 매수를 집행합니다."
+        signal_desc = f"{signal_ticker} 낙폭 -20% 초과({cur_dd:.2f}%) 대하락장입니다. {target_ticker} 90% : 현금 10% 비중으로 강력 리밸런싱 매수를 집행합니다."
         signal_badge = "bg-rose-500/20 text-rose-400 border-rose-500/30"
         signal_icon = "flame"
 
     total_buy_count = sum(1 for t in trades if t['type'] == "매수")
     total_sell_count = sum(1 for t in trades if t['type'] == "매도")
 
-    summary_result = {
+    result = {
+        "account_id": account_id,
+        "account_num": account_num,
+        "account_title": account_title,
+        "signal_ticker": signal_ticker,
+        "target_ticker": target_ticker,
+        "target_name": target_name,
         "start_date": df.index[0].strftime("%Y년 %m월 %d일"),
         "latest_date": df.index[-1].strftime("%Y년 %m월 %d일"),
         "initial_krw": INITIAL_KRW,
@@ -373,115 +360,329 @@ def run_simulation(df):
         "cash_ratio": (latest['cash_usd'] / latest['total_usd']) * 100.0,
         "fx_rate": latest['fx'],
         
-        "tqqq_shares": latest['tqqq_shares'],
-        "tqqq_price": latest['tqqq_price'],
-        "tqqq_avg_price": tqqq_avg_price,
-        "tqqq_eval_usd": latest['tqqq_shares'] * latest['tqqq_price'],
-        "tqqq_eval_krw": latest['tqqq_shares'] * latest['tqqq_price'] * latest['fx'],
-        "tqqq_ratio": ((latest['tqqq_shares'] * latest['tqqq_price']) / latest['total_usd']) * 100.0,
-        "tqqq_profit_pct": ((latest['tqqq_price'] / tqqq_avg_price) - 1.0) * 100.0 if tqqq_avg_price > 0 else 0.0,
-        "tqqq_profit_usd": (latest['tqqq_shares'] * latest['tqqq_price']) - (latest['tqqq_shares'] * tqqq_avg_price),
+        "shares": latest['shares'],
+        "price": latest['price'],
+        "avg_price": avg_price,
+        "eval_usd": latest['shares'] * latest['price'],
+        "eval_krw": latest['shares'] * latest['price'] * latest['fx'],
+        "stock_ratio": ((latest['shares'] * latest['price']) / latest['total_usd']) * 100.0,
+        "profit_pct": ((latest['price'] / avg_price) - 1.0) * 100.0 if avg_price > 0 else 0.0,
+        "profit_usd": (latest['shares'] * latest['price']) - (latest['shares'] * avg_price),
         
-        "qqq_dd": cur_dd,
+        "sig_dd": cur_dd,
         "disparity": cur_disp,
         "signal_title": signal_title,
         "signal_desc": signal_desc,
         "signal_badge": signal_badge,
         "signal_icon": signal_icon,
         
-        "all_trades": trades[::-1], # 전체 체결 내역 (최신순 정렬)
-        "recent_trades": trades[-5:][::-1], # 최근 5건 (간략보기용)
+        "all_trades": trades[::-1],
+        "recent_trades": trades[-5:][::-1],
         "total_trade_count": len(trades),
         "total_buy_count": total_buy_count,
         "total_sell_count": total_sell_count
     }
 
-    print(f" -> 시뮬레이션 완료 ({summary_result['start_date']} 시작):")
-    print(f"    - 초기 투자금: KRW {INITIAL_KRW:,.0f} (${INITIAL_USD:,.2f})")
-    print(f"    - 현재 총 자산: KRW {summary_result['total_krw']:,.0f} (${summary_result['total_usd']:,.2f})")
-    print(f"    - 누적 수익률: {summary_result['cum_return_pct']:+.2f}%")
-    print(f"    - TQQQ 보유: {summary_result['tqqq_shares']}주 | 예수금: ${summary_result['cash_usd']:,.2f}")
-    print(f"    - 총 체결 횟수: {summary_result['total_trade_count']}회 (매수 {total_buy_count}회, 매도 {total_sell_count}회)")
-    return summary_result
+    print(f" -> {account_title} 완료: 총자산 KRW {result['total_krw']:,.0f} ({result['cum_return_pct']:+.2f}%) | {target_ticker} {result['shares']}주 | 예수금 ${result['cash_usd']:,.2f} | 체결 {result['total_trade_count']}회")
+    return result
 
 
 # ---------------------------------------------------------
-# 3. 증권사 MTS 스타일 index.html 웹페이지 렌더링 (탭 인터페이스)
+# 2. 멀티 계좌 MTS HTML 생성기
 # ---------------------------------------------------------
-def render_mts_html(res, output_path="index.html"):
-    print("[3/4] 증권사 MTS 스타일 index.html 생성 중 (계좌 잔고 / 체결 내역 탭 포함)...")
+def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
+    print("\n[HTML 생성] QQQ-TQQQ & SOXX-SOXL 듀얼 계좌 MTS index.html 렌더링 중...")
 
-    # 1) 전체 체결 내역 HTML 생성
-    all_trades_html = ""
-    for t in res["all_trades"]:
-        is_buy = t["type"] == "매수"
-        type_badge = (
-            '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>'
-            if is_buy else
-            '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>'
-        )
-        shares_text = f"+{t['shares']}주" if is_buy else f"-{t['shares']}주"
-        shares_color = "text-rose-400 font-bold" if is_buy else "text-blue-400 font-bold"
+    def build_account_views(acc):
+        aid = acc["account_id"]
+        profit_color = "text-rose-400" if acc['cum_return_pct'] >= 0 else "text-blue-400"
+        profit_sign = "+" if acc['cum_return_pct'] >= 0 else ""
 
-        all_trades_html += f"""
-        <div class="trade-item p-3.5 bg-slate-900/60 rounded-xl border border-slate-800/90 flex items-center justify-between text-xs hover:border-slate-700 transition" data-type="{t['type']}">
-            <div class="space-y-1.5">
-                <div class="flex items-center gap-2">
-                    {type_badge}
-                    <span class="font-bold text-white text-[13px]">{t['date']}</span>
-                    <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-medium">TQQQ</span>
+        # 전체 체결 내역 HTML
+        all_trades_html = ""
+        for t in acc["all_trades"]:
+            is_buy = t["type"] == "매수"
+            type_badge = (
+                '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>'
+                if is_buy else
+                '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>'
+            )
+            shares_text = f"+{t['shares']}주" if is_buy else f"-{t['shares']}주"
+            shares_color = "text-rose-400 font-bold" if is_buy else "text-blue-400 font-bold"
+
+            all_trades_html += f"""
+            <div class="trade-item-{aid} p-3.5 bg-slate-900/60 rounded-xl border border-slate-800/90 flex items-center justify-between text-xs hover:border-slate-700 transition" data-type="{t['type']}">
+                <div class="space-y-1.5">
+                    <div class="flex items-center gap-2">
+                        {type_badge}
+                        <span class="font-bold text-white text-[13px]">{t['date']}</span>
+                        <span class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-medium">{t['ticker']}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-300 font-medium">{t['reason']}</p>
+                    <div class="text-[10px] text-slate-400">
+                        체결 후 예수금: <span class="text-slate-300 font-semibold">${t['cash_after']:,.2f}</span>
+                    </div>
                 </div>
-                <p class="text-[11px] text-slate-300 font-medium">{t['reason']}</p>
-                <div class="text-[10px] text-slate-400">
-                    체결 후 예수금: <span class="text-slate-300 font-semibold">${t['cash_after']:,.2f}</span>
+                <div class="text-right space-y-0.5 pl-2">
+                    <div class="{shares_color} text-sm">{shares_text}</div>
+                    <div class="text-[11px] text-slate-300 font-medium">@ ${t['price']:,.2f}</div>
+                    <div class="text-[11px] text-slate-400 font-medium">₩{t['amount_krw']:,.0f}</div>
+                    <div class="text-[10px] text-slate-400">(${t['amount_usd']:,.2f})</div>
                 </div>
             </div>
-            <div class="text-right space-y-0.5 pl-2">
-                <div class="{shares_color} text-sm">{shares_text}</div>
-                <div class="text-[11px] text-slate-300 font-medium">@ ${t['price']:,.2f}</div>
-                <div class="text-[11px] text-slate-400 font-medium">₩{t['amount_krw']:,.0f}</div>
-                <div class="text-[10px] text-slate-400">(${t['amount_usd']:,.2f})</div>
+            """
+
+        # 최근 체결 내역 HTML
+        recent_trades_html = ""
+        for t in acc["recent_trades"]:
+            is_buy = t["type"] == "매수"
+            type_badge = (
+                '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>'
+                if is_buy else
+                '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>'
+            )
+            shares_text = f"+{t['shares']}주" if is_buy else f"-{t['shares']}주"
+            shares_color = "text-rose-400 font-bold" if is_buy else "text-blue-400 font-bold"
+
+            recent_trades_html += f"""
+            <div class="py-2.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
+                <div class="space-y-0.5">
+                    <div class="flex items-center gap-1.5">
+                        {type_badge}
+                        <span class="font-bold text-white text-[12px]">{t['date']}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 truncate max-w-[190px] sm:max-w-xs">{t['reason']}</p>
+                </div>
+                <div class="text-right space-y-0.5">
+                    <div class="{shares_color} text-xs">{shares_text}</div>
+                    <div class="text-[10px] text-slate-400">@ ${t['price']:,.2f}</div>
+                </div>
+            </div>
+            """
+
+        return f"""
+        <!-- 계좌 하위 서브탭 (잔고 / 체결내역) -->
+        <div class="pt-2">
+            <div class="bg-slate-900/90 p-1 rounded-xl border border-slate-800 grid grid-cols-2 gap-1 text-xs">
+                <button id="subtab-btn-{aid}-balance" onclick="switchSubTab('{aid}', 'balance')" class="subtab-btn-{aid} py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm">
+                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-rose-400"></i>
+                    <span>계좌 잔고</span>
+                </button>
+                <button id="subtab-btn-{aid}-trades" onclick="switchSubTab('{aid}', 'trades')" class="subtab-btn-{aid} py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200">
+                    <i data-lucide="receipt" class="w-3.5 h-3.5"></i>
+                    <span>체결 내역 ({acc['total_trade_count']}건)</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- [SUB-TAB 1] 계좌 잔고 -->
+        <div id="subtab-{aid}-balance" class="subtab-content-{aid} active space-y-3.5 mt-3">
+
+            <!-- 총 자산 평가 카드 -->
+            <div class="mts-card rounded-2xl p-4 shadow-xl">
+                <div class="flex items-center justify-between text-xs text-slate-400 mb-1">
+                    <div class="flex items-center gap-1.5">
+                        <span class="font-bold text-slate-300">{acc['account_title']}</span>
+                        <span class="text-[10px] text-slate-500">|</span>
+                        <span>총 평가금액</span>
+                    </div>
+                    <span class="text-[11px] bg-rose-500/10 text-rose-400 font-bold px-2 py-0.5 rounded-full border border-rose-500/20">
+                        {acc['start_date']} 시작
+                    </span>
+                </div>
+                
+                <div class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mt-0.5">
+                    ₩{acc['total_krw']:,.0f}
+                </div>
+
+                <div class="flex items-center gap-2 mt-2 text-xs">
+                    <span class="{profit_color} font-black text-sm">{profit_sign}{acc['cum_return_pct']:,.2f}%</span>
+                    <span class="{profit_color} font-bold">({profit_sign}₩{acc['profit_krw']:,.0f})</span>
+                    <span class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-semibold ml-auto">
+                        초기 원금 500만원
+                    </span>
+                </div>
+
+                <div class="mts-subcard rounded-xl p-3 mt-3.5 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                        <span class="text-[11px] text-slate-400 block">총 자산 (USD)</span>
+                        <span class="font-bold text-slate-200 text-sm">${acc['total_usd']:,.2f}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[11px] text-slate-400 block">초기 투자 환산액</span>
+                        <span class="font-bold text-slate-400 text-sm">${acc['initial_usd']:,.2f}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 외화 예수금 카드 -->
+            <div class="mts-card rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-300">
+                        <i data-lucide="wallet" class="w-4 h-4 text-emerald-400"></i>
+                        <span>외화 예수금 (USD 현금)</span>
+                    </div>
+                    <span class="text-xs font-bold text-emerald-400">비중 {acc['cash_ratio']:.1f}%</span>
+                </div>
+
+                <div class="flex items-baseline justify-between mt-1">
+                    <div class="text-xl font-black text-emerald-400">
+                        ${acc['cash_usd']:,.2f}
+                    </div>
+                    <div class="text-xs text-slate-400">
+                        약 ₩{acc['cash_krw']:,.0f}
+                    </div>
+                </div>
+
+                <div class="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>적용 환율 (USDKRW)</span>
+                    <span class="font-semibold text-slate-300">₩{acc['fx_rate']:,.2f} / USD</span>
+                </div>
+            </div>
+
+            <!-- 오늘의 주문 가이드 -->
+            <div class="mts-card rounded-2xl p-4 border border-indigo-500/30 shadow-lg relative overflow-hidden">
+                <div class="absolute -right-8 -top-8 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none"></div>
+
+                <div class="flex items-center justify-between mb-2.5">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
+                        <i data-lucide="compass" class="w-4 h-4"></i>
+                        <span>오늘의 주문 가이드 ({acc['signal_ticker']} 기준)</span>
+                    </div>
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold {acc['signal_badge']}">
+                        {acc['signal_title']}
+                    </span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 my-2.5">
+                    <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
+                        <span class="text-[10px] text-slate-400 block">{acc['signal_ticker']} 고점대비 낙폭 (DD)</span>
+                        <span class="text-sm font-black text-rose-400">{acc['sig_dd']:.2f}%</span>
+                    </div>
+                    <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
+                        <span class="text-[10px] text-slate-400 block">{acc['signal_ticker']} 60월선 이격도</span>
+                        <span class="text-sm font-black text-indigo-400">+{acc['disparity']:.2f}%</span>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                    <p class="font-bold text-white flex items-center gap-1.5 mb-0.5">
+                        <i data-lucide="{acc['signal_icon']}" class="w-3.5 h-3.5 text-indigo-400"></i>
+                        <span>{acc['signal_title']}</span>
+                    </p>
+                    <p class="text-[11px] text-slate-400 mt-1">{acc['signal_desc']}</p>
+                </div>
+            </div>
+
+            <!-- 보유 종목 카드 -->
+            <div class="mts-card rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5">
+                        <span class="font-extrabold text-white text-base">{acc['target_ticker']}</span>
+                        <span class="text-[11px] text-slate-400">{acc['target_name']}</span>
+                    </div>
+                    <span class="text-xs font-bold text-indigo-400">비중 {acc['stock_ratio']:.1f}%</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-800 text-xs">
+                    <div>
+                        <span class="text-[11px] text-slate-400 block">보유 수량</span>
+                        <span class="font-black text-white text-sm">{acc['shares']} 주</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[11px] text-slate-400 block">현재가 (USD)</span>
+                        <span class="font-black text-white text-sm">${acc['price']:,.2f}</span>
+                    </div>
+                    <div>
+                        <span class="text-[11px] text-slate-400 block">평균 매입단가</span>
+                        <span class="font-bold text-slate-300 text-xs">${acc['avg_price']:,.2f}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[11px] text-slate-400 block">수익률</span>
+                        <span class="font-bold text-rose-400 text-xs">+{acc['profit_pct']:,.2f}%</span>
+                    </div>
+                </div>
+
+                <div class="mts-subcard rounded-xl p-3 mt-3 flex items-center justify-between text-xs">
+                    <div>
+                        <span class="text-[10px] text-slate-400 block">평가 금액</span>
+                        <span class="font-extrabold text-white text-sm">₩{acc['eval_krw']:,.0f}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] text-slate-400 block">평가 손익 (USD)</span>
+                        <span class="font-bold text-rose-400 text-xs">+${acc['profit_usd']:,.2f}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 최근 체결 내역 카드 -->
+            <div class="mts-card rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                        <i data-lucide="receipt" class="w-4 h-4 text-slate-400"></i>
+                        <span>최근 체결 내역 (최근 5건)</span>
+                    </div>
+                    <button onclick="switchSubTab('{aid}', 'trades')" class="text-[11px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-0.5">
+                        <span>전체 {acc['total_trade_count']}건 보기</span>
+                        <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+
+                <div class="divide-y divide-slate-800/80">
+                    {recent_trades_html}
+                </div>
+            </div>
+
+        </div>
+
+        <!-- [SUB-TAB 2] 전체 체결 내역 -->
+        <div id="subtab-{aid}-trades" class="subtab-content-{aid} space-y-3.5 mt-3" style="display: none;">
+            <div class="mts-card rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                        <i data-lucide="history" class="w-4 h-4 text-indigo-400"></i>
+                        <span>{acc['target_ticker']} 전체 체결 기록</span>
+                    </div>
+                    <span class="text-[11px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-700">
+                        총 {acc['total_trade_count']}건
+                    </span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+                        <span class="text-slate-400">총 매수 체결</span>
+                        <span class="font-bold text-rose-400 text-sm">{acc['total_buy_count']} 회</span>
+                    </div>
+                    <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+                        <span class="text-slate-400">총 매도 체결</span>
+                        <span class="font-bold text-blue-400 text-sm">{acc['total_sell_count']} 회</span>
+                    </div>
+                </div>
+
+                <!-- 필터 버튼 -->
+                <div class="flex gap-1.5 mt-3 pt-3 border-t border-slate-800 text-[11px]">
+                    <button onclick="filterTrades('{aid}', 'all')" class="filter-btn-{aid} active px-3 py-1 rounded-md font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">전체</button>
+                    <button onclick="filterTrades('{aid}', '매수')" class="filter-btn-{aid} px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white">매수만</button>
+                    <button onclick="filterTrades('{aid}', '매도')" class="filter-btn-{aid} px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white">매도만</button>
+                </div>
+            </div>
+
+            <!-- 전체 체결 내역 리스트 -->
+            <div class="space-y-2">
+                {all_trades_html}
             </div>
         </div>
         """
 
-    # 2) 최근 체결 내역 (간략 미리보기용) HTML 생성
-    recent_trades_html = ""
-    for t in res["recent_trades"]:
-        is_buy = t["type"] == "매수"
-        type_badge = (
-            '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">매수</span>'
-            if is_buy else
-            '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">매도</span>'
-        )
-        shares_text = f"+{t['shares']}주" if is_buy else f"-{t['shares']}주"
-        shares_color = "text-rose-400 font-bold" if is_buy else "text-blue-400 font-bold"
-
-        recent_trades_html += f"""
-        <div class="py-2.5 border-b border-slate-800/80 last:border-b-0 flex items-center justify-between text-xs">
-            <div class="space-y-0.5">
-                <div class="flex items-center gap-1.5">
-                    {type_badge}
-                    <span class="font-bold text-white text-[12px]">{t['date']}</span>
-                </div>
-                <p class="text-[11px] text-slate-400 truncate max-w-[190px] sm:max-w-xs">{t['reason']}</p>
-            </div>
-            <div class="text-right space-y-0.5">
-                <div class="{shares_color} text-xs">{shares_text}</div>
-                <div class="text-[10px] text-slate-400">@ ${t['price']:,.2f}</div>
-            </div>
-        </div>
-        """
-
-    profit_color = "text-rose-400" if res['cum_return_pct'] >= 0 else "text-blue-400"
-    profit_sign = "+" if res['cum_return_pct'] >= 0 else ""
+    tqqq_views = build_account_views(acc_tqqq)
+    soxl_views = build_account_views(acc_soxl)
 
     html = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>위탁종합 계좌 잔고 | QQQ 퀀트 포트폴리오</title>
+    <title>위탁종합 퀀트 멀티 계좌 잔고 | TQQQ & SOXL</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -498,11 +699,10 @@ def render_mts_html(res, output_path="index.html"):
             background: #162032;
             border: 1px solid #243044;
         }}
-        /* Tab transitions */
-        .tab-content {{
+        .acc-view {{
             display: none;
         }}
-        .tab-content.active {{
+        .acc-view.active {{
             display: block;
         }}
     </style>
@@ -518,283 +718,133 @@ def render_mts_html(res, output_path="index.html"):
                 </div>
                 <div>
                     <div class="flex items-center gap-1.5">
-                        <span class="text-xs font-bold text-slate-200">위탁종합 (해외)</span>
-                        <span class="text-[10px] text-slate-400">112-92-****01</span>
+                        <span id="header-acc-name" class="text-xs font-bold text-slate-200">{acc_tqqq['account_title']}</span>
+                        <span id="header-acc-num" class="text-[10px] text-slate-400">{acc_tqqq['account_num']}</span>
                     </div>
                     <div class="text-[10px] text-slate-400 flex items-center gap-1">
                         <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>{res['latest_date']} 기준 (자동갱신)</span>
+                        <span>{acc_tqqq['latest_date']} 기준 (자동갱신)</span>
                     </div>
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">실시간 USD 운용</span>
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">듀얼 계좌 운용</span>
             </div>
         </div>
     </header>
 
-    <!-- MTS 상단 탭 네비게이션 컨트롤 -->
-    <div class="max-w-md mx-auto px-4 pt-3">
-        <div class="bg-slate-900/90 p-1 rounded-xl border border-slate-800 grid grid-cols-2 gap-1 text-xs">
-            <button id="tab-btn-balance" onclick="switchTab('balance')" class="tab-btn py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm">
-                <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-rose-400"></i>
-                <span>계좌 잔고</span>
+    <!-- 2. 최상단 메인 계좌 전환 탭 바 (TQQQ / SOXL) -->
+    <div class="max-w-md mx-auto px-4 pt-3.5">
+        <div class="bg-slate-900/95 p-1 rounded-2xl border border-slate-800 grid grid-cols-2 gap-1.5 shadow-lg">
+            
+            <!-- 계좌 1 탭: TQQQ -->
+            <button id="acc-tab-btn-tqqq" onclick="switchAccount('tqqq')" class="py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                    <span class="font-bold text-xs">나스닥 3X (TQQQ)</span>
+                </div>
+                <div class="text-[11px] font-extrabold text-rose-400">
+                    +{acc_tqqq['cum_return_pct']:,.2f}%
+                </div>
             </button>
-            <button id="tab-btn-trades" onclick="switchTab('trades')" class="tab-btn py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200">
-                <i data-lucide="receipt" class="w-3.5 h-3.5"></i>
-                <span>체결 내역 ({res['total_trade_count']}건)</span>
+
+            <!-- 계좌 2 탭: SOXL -->
+            <button id="acc-tab-btn-soxl" onclick="switchAccount('soxl')" class="py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                    <span class="font-bold text-xs">반도체 3X (SOXL)</span>
+                </div>
+                <div class="text-[11px] font-extrabold text-blue-400">
+                    +{acc_soxl['cum_return_pct']:,.2f}%
+                </div>
             </button>
+
         </div>
     </div>
 
-    <!-- 메인 대시보드 컨테이너 -->
-    <main class="max-w-md mx-auto px-4 mt-3 space-y-3.5">
+    <!-- 메인 컨테이너 -->
+    <main class="max-w-md mx-auto px-4 space-y-3.5">
 
         <!-- ============================================== -->
-        <!-- [TAB 1] 계좌 잔고 (Overview Tab) -->
+        <!-- [ACCOUNT 1] QQQ-TQQQ (나스닥 3X) 뷰 -->
         <!-- ============================================== -->
-        <div id="tab-balance" class="tab-content active space-y-3.5">
-
-            <!-- 2. 총 자산 평가 요약 카드 (MTS 최상단 메인) -->
-            <div class="mts-card rounded-2xl p-4 shadow-xl">
-                <div class="flex items-center justify-between text-xs text-slate-400 mb-1">
-                    <span>총 평가금액 (KRW)</span>
-                    <span class="text-[11px] bg-rose-500/10 text-rose-400 font-bold px-2 py-0.5 rounded-full border border-rose-500/20">
-                        {res['start_date']} 시작
-                    </span>
-                </div>
-                
-                <div class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mt-0.5">
-                    ₩{res['total_krw']:,.0f}
-                </div>
-
-                <div class="flex items-center gap-2 mt-2 text-xs">
-                    <span class="{profit_color} font-black text-sm">{profit_sign}{res['cum_return_pct']:,.2f}%</span>
-                    <span class="{profit_color} font-bold">({profit_sign}₩{res['profit_krw']:,.0f})</span>
-                    <span class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-semibold ml-auto">
-                        초기 원금 500만원
-                    </span>
-                </div>
-
-                <!-- 세부 환산 박스 -->
-                <div class="mts-subcard rounded-xl p-3 mt-3.5 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                        <span class="text-[11px] text-slate-400 block">총 자산 (USD)</span>
-                        <span class="font-bold text-slate-200 text-sm">${res['total_usd']:,.2f}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[11px] text-slate-400 block">초기 투자 환산액</span>
-                        <span class="font-bold text-slate-400 text-sm">${res['initial_usd']:,.2f}</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 3. 외화 예수금 카드 (USD 현금) -->
-            <div class="mts-card rounded-2xl p-4 shadow-lg">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-300">
-                        <i data-lucide="wallet" class="w-4 h-4 text-emerald-400"></i>
-                        <span>외화 예수금 (USD 현금)</span>
-                    </div>
-                    <span class="text-xs font-bold text-emerald-400">비중 {res['cash_ratio']:.1f}%</span>
-                </div>
-
-                <div class="flex items-baseline justify-between mt-1">
-                    <div class="text-xl font-black text-emerald-400">
-                        ${res['cash_usd']:,.2f}
-                    </div>
-                    <div class="text-xs text-slate-400">
-                        약 ₩{res['cash_krw']:,.0f}
-                    </div>
-                </div>
-
-                <div class="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>적용 환율 (USDKRW)</span>
-                    <span class="font-semibold text-slate-300">₩{res['fx_rate']:,.2f} / USD</span>
-                </div>
-            </div>
-
-            <!-- 4. 오늘의 주문 가이드 (핵심 시그널 카드) -->
-            <div class="mts-card rounded-2xl p-4 border border-indigo-500/30 shadow-lg relative overflow-hidden">
-                <div class="absolute -right-8 -top-8 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none"></div>
-
-                <div class="flex items-center justify-between mb-2.5">
-                    <div class="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
-                        <i data-lucide="compass" class="w-4 h-4"></i>
-                        <span>오늘의 주문 가이드 (Strategy Signal)</span>
-                    </div>
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold {res['signal_badge']}">
-                        {res['signal_title']}
-                    </span>
-                </div>
-
-                <!-- QQQ 상태 지표 배지 그리드 -->
-                <div class="grid grid-cols-2 gap-2 my-2.5">
-                    <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
-                        <span class="text-[10px] text-slate-400 block">QQQ 고점 대비 낙폭 (DD)</span>
-                        <span class="text-sm font-black text-rose-400">{res['qqq_dd']:.2f}%</span>
-                    </div>
-                    <div class="bg-slate-900/80 rounded-xl p-2.5 border border-slate-800">
-                        <span class="text-[10px] text-slate-400 block">QQQ 60월선 이격도</span>
-                        <span class="text-sm font-black text-indigo-400">+{res['disparity']:.2f}%</span>
-                    </div>
-                </div>
-
-                <!-- 행동 요약 설명 -->
-                <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs text-slate-300 leading-relaxed">
-                    <p class="font-bold text-white flex items-center gap-1.5 mb-0.5">
-                        <i data-lucide="{res['signal_icon']}" class="w-3.5 h-3.5 text-indigo-400"></i>
-                        <span>{res['signal_title']}</span>
-                    </p>
-                    <p class="text-[11px] text-slate-400 mt-1">{res['signal_desc']}</p>
-                </div>
-            </div>
-
-            <!-- 5. 보유 종목 카드 (TQQQ) -->
-            <div class="mts-card rounded-2xl p-4 shadow-lg">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5">
-                        <span class="font-extrabold text-white text-base">TQQQ</span>
-                        <span class="text-[11px] text-slate-400">ProShares UltraPro QQQ</span>
-                    </div>
-                    <span class="text-xs font-bold text-indigo-400">비중 {res['tqqq_ratio']:.1f}%</span>
-                </div>
-
-                <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-800 text-xs">
-                    <div>
-                        <span class="text-[11px] text-slate-400 block">보유 수량</span>
-                        <span class="font-black text-white text-sm">{res['tqqq_shares']} 주</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[11px] text-slate-400 block">현재가 (USD)</span>
-                        <span class="font-black text-white text-sm">${res['tqqq_price']:,.2f}</span>
-                    </div>
-                    <div>
-                        <span class="text-[11px] text-slate-400 block">평균 매입단가</span>
-                        <span class="font-bold text-slate-300 text-xs">${res['tqqq_avg_price']:,.2f}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[11px] text-slate-400 block">수익률</span>
-                        <span class="font-bold text-rose-400 text-xs">+{res['tqqq_profit_pct']:,.2f}%</span>
-                    </div>
-                </div>
-
-                <div class="mts-subcard rounded-xl p-3 mt-3 flex items-center justify-between text-xs">
-                    <div>
-                        <span class="text-[10px] text-slate-400 block">평가 금액</span>
-                        <span class="font-extrabold text-white text-sm">₩{res['tqqq_eval_krw']:,.0f}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[10px] text-slate-400 block">평가 손익 (USD)</span>
-                        <span class="font-bold text-rose-400 text-xs">+${res['tqqq_profit_usd']:,.2f}</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 6. 최근 체결 내역 미리보기 카드 -->
-            <div class="mts-card rounded-2xl p-4 shadow-lg">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
-                        <i data-lucide="receipt" class="w-4 h-4 text-slate-400"></i>
-                        <span>최근 체결 내역 (최근 5건)</span>
-                    </div>
-                    <button onclick="switchTab('trades')" class="text-[11px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-0.5">
-                        <span>전체 {res['total_trade_count']}건 보기</span>
-                        <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
-                    </button>
-                </div>
-
-                <div class="divide-y divide-slate-800/80">
-                    {recent_trades_html}
-                </div>
-            </div>
-
+        <div id="acc-view-tqqq" class="acc-view active space-y-3.5">
+            {tqqq_views}
         </div>
 
         <!-- ============================================== -->
-        <!-- [TAB 2] 전체 체결 내역 (Trade History Tab) -->
+        <!-- [ACCOUNT 2] SOXX-SOXL (반도체 3X) 뷰 -->
         <!-- ============================================== -->
-        <div id="tab-trades" class="tab-content space-y-3.5">
-
-            <!-- 체결 내역 종합 요약 카드 -->
-            <div class="mts-card rounded-2xl p-4 shadow-lg">
-                <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
-                        <i data-lucide="history" class="w-4 h-4 text-indigo-400"></i>
-                        <span>전체 매매 체결 기록</span>
-                    </div>
-                    <span class="text-[11px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-700">
-                        총 {res['total_trade_count']}건
-                    </span>
-                </div>
-
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <span class="text-slate-400">총 매수 체결</span>
-                        <span class="font-bold text-rose-400 text-sm">{res['total_buy_count']} 회</span>
-                    </div>
-                    <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <span class="text-slate-400">총 매도 체결</span>
-                        <span class="font-bold text-blue-400 text-sm">{res['total_sell_count']} 회</span>
-                    </div>
-                </div>
-
-                <!-- 필터 버튼 -->
-                <div class="flex gap-1.5 mt-3 pt-3 border-t border-slate-800 text-[11px]">
-                    <button onclick="filterTrades('all')" class="filter-btn active px-3 py-1 rounded-md font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">전체</button>
-                    <button onclick="filterTrades('매수')" class="filter-btn px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white">매수만</button>
-                    <button onclick="filterTrades('매도')" class="filter-btn px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white">매도만</button>
-                </div>
-            </div>
-
-            <!-- 전체 체결 내역 리스트 -->
-            <div id="trades-list-container" class="space-y-2">
-                {all_trades_html}
-            </div>
-
+        <div id="acc-view-soxl" class="acc-view space-y-3.5">
+            {soxl_views}
         </div>
 
     </main>
 
     <!-- 하단 고정 정보 바 -->
     <footer class="max-w-md mx-auto text-center text-slate-500 text-[11px] py-6 px-4">
-        <p>TQQQ Quantitative Asset Allocation Engine • GitHub Pages Automated</p>
-        <p class="mt-1 text-[10px]">투자 시작일: {res['start_date']} (초기 500만원) ~ 현재</p>
+        <p>Quantitative Dual-Asset Allocation Engine • GitHub Pages Automated</p>
+        <p class="mt-1 text-[10px]">투자 시작일: {acc_tqqq['start_date']} (계좌당 초기 500만원) ~ 현재</p>
     </footer>
 
     <!-- 클라이언트 탭 전환 및 필터 스크립트 -->
     <script>
         lucide.createIcons();
 
-        function switchTab(tabName) {{
-            // 탭 컨텐츠 전환
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tabName).classList.add('active');
+        // 1. 최상단 메인 계좌 전환 함수
+        function switchAccount(accId) {{
+            document.querySelectorAll('.acc-view').forEach(el => el.classList.remove('active'));
+            document.getElementById('acc-view-' + accId).classList.add('active');
 
-            // 탭 버튼 스타일 전환
-            const btnBalance = document.getElementById('tab-btn-balance');
-            const btnTrades = document.getElementById('tab-btn-trades');
+            const btnTqqq = document.getElementById('acc-tab-btn-tqqq');
+            const btnSoxl = document.getElementById('acc-tab-btn-soxl');
+            const headerName = document.getElementById('header-acc-name');
+            const headerNum = document.getElementById('header-acc-num');
 
-            if (tabName === 'balance') {{
-                btnBalance.className = 'tab-btn py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
-                btnTrades.className = 'tab-btn py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+            if (accId === 'tqqq') {{
+                btnTqqq.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
+                btnSoxl.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
+                headerName.textContent = "{acc_tqqq['account_title']}";
+                headerNum.textContent = "{acc_tqqq['account_num']}";
             }} else {{
-                btnTrades.className = 'tab-btn py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
-                btnBalance.className = 'tab-btn py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+                btnSoxl.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
+                btnTqqq.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
+                headerName.textContent = "{acc_soxl['account_title']}";
+                headerNum.textContent = "{acc_soxl['account_num']}";
             }}
 
             window.scrollTo({{ top: 0, behavior: 'smooth' }});
         }}
 
-        function filterTrades(type) {{
-            const items = document.querySelectorAll('.trade-item');
-            const buttons = document.querySelectorAll('.filter-btn');
+        // 2. 계좌별 하위 서브탭 (잔고 / 체결내역) 전환 함수
+        function switchSubTab(accId, tabName) {{
+            document.querySelectorAll('.subtab-content-' + accId).forEach(el => el.style.display = 'none');
+            document.getElementById('subtab-' + accId + '-' + tabName).style.display = 'block';
+
+            const btnBalance = document.getElementById('subtab-btn-' + accId + '-balance');
+            const btnTrades = document.getElementById('subtab-btn-' + accId + '-trades');
+
+            if (tabName === 'balance') {{
+                btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
+                btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+            }} else {{
+                btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
+                btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+            }}
+
+            window.scrollTo({{ top: 0, behavior: 'smooth' }});
+        }}
+
+        // 3. 체결 내역 필터링 함수
+        function filterTrades(accId, type) {{
+            const items = document.querySelectorAll('.trade-item-' + accId);
+            const buttons = document.querySelectorAll('.filter-btn-' + accId);
 
             buttons.forEach(btn => {{
                 if (btn.textContent.includes(type) || (type === 'all' && btn.textContent === '전체')) {{
-                    btn.className = 'filter-btn px-3 py-1 rounded-md font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                    btn.className = 'filter-btn-' + accId + ' px-3 py-1 rounded-md font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
                 }} else {{
-                    btn.className = 'filter-btn px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white';
+                    btn.className = 'filter-btn-' + accId + ' px-3 py-1 rounded-md font-medium bg-slate-900 text-slate-400 border border-slate-800 hover:text-white';
                 }}
             }});
 
@@ -813,15 +863,35 @@ def render_mts_html(res, output_path="index.html"):
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"[4/4] index.html 생성 완료 -> {output_path}")
+    print(f"[4/4] 듀얼 계좌 index.html 생성 완료 -> {output_path}")
 
 
 def main():
-    # 2025년 1월 7일 시작 기준
-    df = fetch_market_data(start_date="2025-01-07")
-    summary = run_simulation(df)
-    render_mts_html(summary, "index.html")
-    print("[SUCCESS] 전체 시뮬레이션 및 MTS 웹 대시보드 빌드 성공!")
+    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X)
+    acc_tqqq = run_quant_strategy(
+        signal_ticker="QQQ",
+        target_ticker="TQQQ",
+        target_name="ProShares UltraPro QQQ",
+        account_id="tqqq",
+        account_num="112-92-****01",
+        account_title="위탁종합 (나스닥 3X)",
+        start_date="2025-01-07"
+    )
+
+    # 2) 계좌 2: SOXX -> SOXL (반도체 3X)
+    acc_soxl = run_quant_strategy(
+        signal_ticker="SOXX",
+        target_ticker="SOXL",
+        target_name="Direxion Daily Semiconductor Bull 3X",
+        account_id="soxl",
+        account_num="112-92-****02",
+        account_title="위탁종합 (반도체 3X)",
+        start_date="2025-01-07"
+    )
+
+    # 3) 듀얼 계좌 MTS HTML 생성
+    render_dual_account_html(acc_tqqq, acc_soxl, "index.html")
+    print("\n[SUCCESS] QQQ-TQQQ 및 SOXX-SOXL 듀얼 계좌 대시보드 빌드 성공!")
 
 
 if __name__ == "__main__":
