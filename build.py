@@ -878,9 +878,9 @@ def main():
         start_date="2025-01-07"
     )
 
-    # 2) 계좌 2: SOXX -> SOXL (반도체 3X)
+    # 2) 계좌 2: QQQ -> SOXL (반도체 3X)
     acc_soxl = run_quant_strategy(
-        signal_ticker="SOXX",
+        signal_ticker="QQQ",
         target_ticker="SOXL",
         target_name="Direxion Daily Semiconductor Bull 3X",
         account_id="soxl",
