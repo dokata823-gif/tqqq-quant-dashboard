@@ -1,26 +1,18 @@
-name: Update and Deploy QQQ-TQQQ Dashboard
+name: Update QQQ-TQQQ Quant Dashboard
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     # 매일 미국 증시 마감 후 (화~토 한국시간 07:00 / UTC 22:00)
     - cron: '0 22 * * 1-5'
-  workflow_dispatch: # 수동 즉시 실행
+  workflow_dispatch: # 수동 즉시 실행 지원
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
 
 jobs:
-  build:
+  update-dashboard:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,22 +40,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes in index.html to commit."
           else
-            git commit -m "chore(auto): update portfolio balance dashboard [skip ci]" || echo "Nothing to commit"
-            git push origin main || echo "Push failed or nothing to push"
+            git commit -m "chore(auto): update portfolio balance dashboard [skip ci]"
+            git push
           fi
-
-      - name: Upload artifact for GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
