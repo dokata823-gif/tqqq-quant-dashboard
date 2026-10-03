@@ -140,13 +140,14 @@ def run_simulation(df):
 
             sold_today = False
 
-            # 2) 매도 우선순위 검사 (당일 1개 조건 발동 시 처리)
             # [1순위 - 반등 분할 매도]
             if cycle_in_dd10 and (qqq_dd >= -5.0) and (not rebound_sold) and (tqqq_shares > 0):
-                # 원화 250만원 상당(USD) 한도로 매도, 최소 250만원 상당 자산 잔존
-                min_remain_usd = 2_500_000.0 / fx_val
+                # TQQQ 주식 가치가 최소 250만 원 상당(USD)은 계좌에 항상 유지되도록 하고,
+                # 250만 원을 초과하는 TQQQ 주식 평가액(하락 중 분할 매수분 등)만 최대 250만 원 한도로 분할 매도
+                min_tqqq_keep_usd = 2_500_000.0 / fx_val
+                cur_tqqq_eval_usd = tqqq_shares * tqqq_p
+                avail_sell_usd = max(0.0, cur_tqqq_eval_usd - min_tqqq_keep_usd)
                 max_sell_usd = 2_500_000.0 / fx_val
-                avail_sell_usd = max(0.0, total_equity_usd - min_remain_usd)
                 actual_sell_usd = min(max_sell_usd, avail_sell_usd)
                 sell_shares = min(tqqq_shares, int(actual_sell_usd // tqqq_p))
 
@@ -159,7 +160,7 @@ def run_simulation(df):
                     trades.append({
                         "date": dt_str,
                         "type": "매도",
-                        "reason": "1순위 반등 분할 매도 (QQQ -5% 이내 회복)",
+                        "reason": f"1순위 반등 분할 매도 (250만원 주식 유지 후 초과 {sell_shares}주 매도)",
                         "shares": sell_shares,
                         "price": tqqq_p,
                         "amount_usd": sold_amount,
