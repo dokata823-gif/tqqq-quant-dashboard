@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-build.py - 2026년 1월 7일부터 현재까지 TQQQ 퀀트 자산배분 매매 시뮬레이션 및
+build.py - 2025년 1월 7일부터 현재까지 TQQQ 퀀트 자산배분 매매 시뮬레이션 및
 GitHub Pages 배포용 증권사 MTS 스타일 index.html 자동 생성 파이프라인 (계좌 잔고 / 전체 체결내역 탭 지원)
 """
 
@@ -14,7 +14,7 @@ import yfinance as yf
 # ---------------------------------------------------------
 # 1. 시세 데이터 수집 및 전처리
 # ---------------------------------------------------------
-def fetch_market_data(start_date="2026-01-07"):
+def fetch_market_data(start_date="2025-01-07"):
     print(f"[1/4] yfinance 시세 데이터 수집 중 (QQQ, TQQQ, USDKRW=X, 시작 기준: {start_date})...")
     
     # 60개월 이평선(1,260영업일) 및 사상 최고가(ATH) 계산을 위해 QQQ는 과거 데이터부터 충분히 수집
@@ -72,7 +72,7 @@ def fetch_market_data(start_date="2026-01-07"):
 # 2. 퀀트 매매 및 자산 배분 백테스트 시뮬레이션
 # ---------------------------------------------------------
 def run_simulation(df):
-    print("[2/4] 퀀트 자산배분 매매 시뮬레이션 실행 중 (2026-01-07 ~ 현재)...")
+    print(f"[2/4] 퀀트 자산배분 매매 시뮬레이션 실행 중 ({df.index[0].strftime('%Y-%m-%d')} ~ 현재)...")
 
     # 기본 자본 설정
     INITIAL_KRW = 5_000_000.0
@@ -817,8 +817,8 @@ def render_mts_html(res, output_path="index.html"):
 
 
 def main():
-    # 2026년 1월 7일 시작 기준
-    df = fetch_market_data(start_date="2026-01-07")
+    # 2025년 1월 7일 시작 기준
+    df = fetch_market_data(start_date="2025-01-07")
     summary = run_simulation(df)
     render_mts_html(summary, "index.html")
     print("[SUCCESS] 전체 시뮬레이션 및 MTS 웹 대시보드 빌드 성공!")
