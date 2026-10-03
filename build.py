@@ -89,6 +89,7 @@ def run_simulation(df):
     # 상태 머신 변수들
     cycle_in_dd10 = False
     rebound_sold = False
+    cycle_bought_shares = 0  # 하락장(-10% 이하) 진입 후 추가 매수한 누적 주수
     rebalance_tier = 0  # 0: 평시, 1: -15% 리밸런싱 완료, 2: -20% 리밸런싱 완료
     principal_recovered = False
     lock_base_value = None
@@ -134,6 +135,7 @@ def run_simulation(df):
             if qqq_dd >= -0.5:
                 cycle_in_dd10 = False
                 rebound_sold = False
+                cycle_bought_shares = 0
                 rebalance_tier = 0
             elif qqq_dd <= -10.0:
                 cycle_in_dd10 = True
@@ -141,32 +143,30 @@ def run_simulation(df):
             sold_today = False
 
             # [1순위 - 반등 분할 매도]
-            if cycle_in_dd10 and (qqq_dd >= -5.0) and (not rebound_sold) and (tqqq_shares > 0):
-                # TQQQ 주식 가치가 최소 250만 원 상당(USD)은 계좌에 항상 유지되도록 하고,
-                # 250만 원을 초과하는 TQQQ 주식 평가액(하락 중 분할 매수분 등)만 최대 250만 원 한도로 분할 매도
+            # 하락장(-10% 이하)에서 추가 매수한 주수(cycle_bought_shares)만 매도 대상
+            # 단, TQQQ 주식 총 평가액이 250만 원 이상(수익 상태)일 때만 매도 집행 (250만원 미만 시 매도 보류)
+            if cycle_in_dd10 and (qqq_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (tqqq_shares > 0):
                 min_tqqq_keep_usd = 2_500_000.0 / fx_val
                 cur_tqqq_eval_usd = tqqq_shares * tqqq_p
-                avail_sell_usd = max(0.0, cur_tqqq_eval_usd - min_tqqq_keep_usd)
-                max_sell_usd = 2_500_000.0 / fx_val
-                actual_sell_usd = min(max_sell_usd, avail_sell_usd)
-                sell_shares = min(tqqq_shares, int(actual_sell_usd // tqqq_p))
-
-                if sell_shares > 0:
-                    sold_amount = sell_shares * tqqq_p
-                    usd_cash += sold_amount
-                    tqqq_shares -= sell_shares
-                    rebound_sold = True
-                    sold_today = True
-                    trades.append({
-                        "date": dt_str,
-                        "type": "매도",
-                        "reason": f"1순위 반등 분할 매도 (250만원 주식 유지 후 초과 {sell_shares}주 매도)",
-                        "shares": sell_shares,
-                        "price": tqqq_p,
-                        "amount_usd": sold_amount,
-                        "amount_krw": sold_amount * fx_val,
-                        "cash_after": usd_cash
-                    })
+                if cur_tqqq_eval_usd >= min_tqqq_keep_usd:
+                    sell_shares = min(tqqq_shares, cycle_bought_shares)
+                    if sell_shares > 0:
+                        sold_amount = sell_shares * tqqq_p
+                        usd_cash += sold_amount
+                        tqqq_shares -= sell_shares
+                        cycle_bought_shares = 0
+                        rebound_sold = True
+                        sold_today = True
+                        trades.append({
+                            "date": dt_str,
+                            "type": "매도",
+                            "reason": f"1순위 반등 분할 매도 (하락장 추가 매수분 {sell_shares}주 익절 매도)",
+                            "shares": sell_shares,
+                            "price": tqqq_p,
+                            "amount_usd": sold_amount,
+                            "amount_krw": sold_amount * fx_val,
+                            "cash_after": usd_cash
+                        })
 
             # [2순위 - 원금 회수]
             elif (not principal_recovered) and (total_return_pct >= 200.0) and (tqqq_shares > 0):
@@ -247,6 +247,7 @@ def run_simulation(df):
                         usd_cash -= tqqq_p
                         tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + tqqq_p) / (tqqq_shares + 1)
                         tqqq_shares += 1
+                        cycle_bought_shares += 1
                         trades.append({
                             "date": dt_str,
                             "type": "매수",
@@ -270,6 +271,7 @@ def run_simulation(df):
                                 usd_cash -= cost
                                 tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + cost) / (tqqq_shares + buy_shares)
                                 tqqq_shares += buy_shares
+                                cycle_bought_shares += buy_shares
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
@@ -294,6 +296,7 @@ def run_simulation(df):
                                 usd_cash -= cost
                                 tqqq_avg_price = ((tqqq_shares * tqqq_avg_price) + cost) / (tqqq_shares + buy_shares)
                                 tqqq_shares += buy_shares
+                                cycle_bought_shares += buy_shares
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
