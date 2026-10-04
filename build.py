@@ -785,7 +785,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
     <!-- 하단 고정 정보 바 -->
     <footer class="max-w-md mx-auto text-center text-slate-500 text-[11px] py-6 px-4">
         <p>Quantitative Dual-Asset Allocation Engine • GitHub Pages Automated</p>
-        <p class="mt-1 text-[10px]">TQQQ (2025.01.07 시작 / 500만) | SOXL (2026.09.30 시작 / 750만)</p>
+        <p class="mt-1 text-[10px]">TQQQ (2026.06.03 시작 / 500만) | SOXL (2026.09.30 시작 / 750만)</p>
     </footer>
 
     <!-- 클라이언트 탭 전환 및 필터 스크립트 -->
@@ -868,7 +868,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
 
 
 def main():
-    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X, 2025-01-07 시작, 원금 500만원)
+    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X, 2026-06-03 시작, 원금 500만원)
     acc_tqqq = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="TQQQ",
@@ -876,7 +876,7 @@ def main():
         account_id="tqqq",
         account_num="112-92-****01",
         account_title="위탁종합 (나스닥 3X)",
-        start_date="2025-01-07",
+        start_date="2026-06-03",
         initial_krw=5_000_000.0
     )
 
