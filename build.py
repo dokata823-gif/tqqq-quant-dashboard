@@ -14,8 +14,8 @@ import yfinance as yf
 # ---------------------------------------------------------
 # 1. 단일 전략 시뮬레이션 엔진 (공통 함수)
 # ---------------------------------------------------------
-def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07"):
-    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date}...")
+def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07", initial_krw=5_000_000.0):
+    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date} | 초기원금: {initial_krw:,.0f}원...")
     
     # 1) 시세 데이터 수집 (60개월 이평선 산출을 위해 2004년부터)
     sig_df = yf.download(signal_ticker, start="2004-01-01", progress=False)
@@ -59,7 +59,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     df['Is_Month_End'] = df.index.isin(month_last_dates)
 
     # 4) 자본 및 상태 머신 설정
-    INITIAL_KRW = 5_000_000.0
+    INITIAL_KRW = float(initial_krw)
     init_fx = float(df['USDKRW'].iloc[0])
     INITIAL_USD = INITIAL_KRW / init_fx
 
@@ -77,11 +77,11 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     principal_recovered = False
     lock_base_value = None
 
-    # Day 1 초기 진입
+    # Day 1 초기 진입 (초기 원금의 50% 매수)
     day1_date = df.index[0]
     day1_price = float(df['Tgt_Close'].iloc[0])
     day1_fx = float(df['USDKRW'].iloc[0])
-    day1_buy_usd_target = 2_500_000.0 / day1_fx
+    day1_buy_usd_target = (INITIAL_KRW / 2.0) / day1_fx
     day1_shares = int(day1_buy_usd_target // day1_price)
 
     if day1_shares > 0:
@@ -92,7 +92,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         trades.append({
             "date": day1_date.strftime("%Y-%m-%d"),
             "type": "매수",
-            "reason": f"Day 1 초기 진입 (원화 250만 원 상당 정수 매수)",
+            "reason": f"Day 1 초기 진입 (원화 {INITIAL_KRW/2/10000:,.0f}만 원 상당 정수 매수)",
             "ticker": target_ticker,
             "shares": day1_shares,
             "price": day1_price,
@@ -127,7 +127,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
 
             # [1순위 - 반등 분할 매도]
             if cycle_in_dd10 and (sig_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
-                min_keep_usd = 2_500_000.0 / fx_val
+                min_keep_usd = (INITIAL_KRW / 2.0) / fx_val
                 cur_eval_usd = shares * tgt_p
                 if cur_eval_usd >= min_keep_usd:
                     sell_shares = min(shares, cycle_bought_shares)
@@ -499,7 +499,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
                     <span class="{profit_color} font-black text-sm">{profit_sign}{acc['cum_return_pct']:,.2f}%</span>
                     <span class="{profit_color} font-bold">({profit_sign}₩{acc['profit_krw']:,.0f})</span>
                     <span class="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-semibold ml-auto">
-                        초기 원금 500만원
+                        초기 원금 {acc['initial_krw']/10000:,.0f}만원
                     </span>
                 </div>
 
@@ -784,7 +784,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
     <!-- 하단 고정 정보 바 -->
     <footer class="max-w-md mx-auto text-center text-slate-500 text-[11px] py-6 px-4">
         <p>Quantitative Dual-Asset Allocation Engine • GitHub Pages Automated</p>
-        <p class="mt-1 text-[10px]">투자 시작일: {acc_tqqq['start_date']} (계좌당 초기 500만원) ~ 현재</p>
+        <p class="mt-1 text-[10px]">TQQQ (2025.01.07 시작 / 500만) | SOXL (2026.09.14 시작 / 750만)</p>
     </footer>
 
     <!-- 클라이언트 탭 전환 및 필터 스크립트 -->
@@ -867,7 +867,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
 
 
 def main():
-    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X)
+    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X, 2025-01-07 시작, 원금 500만원)
     acc_tqqq = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="TQQQ",
@@ -875,10 +875,11 @@ def main():
         account_id="tqqq",
         account_num="112-92-****01",
         account_title="위탁종합 (나스닥 3X)",
-        start_date="2025-01-07"
+        start_date="2025-01-07",
+        initial_krw=5_000_000.0
     )
 
-    # 2) 계좌 2: QQQ -> SOXL (반도체 3X)
+    # 2) 계좌 2: QQQ -> SOXL (반도체 3X, 2026-09-14 시작, 원금 750만원)
     acc_soxl = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="SOXL",
@@ -886,7 +887,8 @@ def main():
         account_id="soxl",
         account_num="112-92-****02",
         account_title="위탁종합 (반도체 3X)",
-        start_date="2025-01-07"
+        start_date="2026-09-14",
+        initial_krw=7_500_000.0
     )
 
     # 3) 듀얼 계좌 MTS HTML 생성
