@@ -77,11 +77,12 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     principal_recovered = False
     lock_base_value = None
 
-    # Day 1 초기 진입 (초기 원금의 50% 매수)
+    # Day 1 초기 진입 (레버리지 종목 매수 상한선: 250만 원)
+    MAX_LEVERAGE_BUY_KRW = 2_500_000.0
     day1_date = df.index[0]
     day1_price = float(df['Tgt_Close'].iloc[0])
     day1_fx = float(df['USDKRW'].iloc[0])
-    day1_buy_usd_target = (INITIAL_KRW / 2.0) / day1_fx
+    day1_buy_usd_target = min(MAX_LEVERAGE_BUY_KRW, INITIAL_KRW) / day1_fx
     day1_shares = int(day1_buy_usd_target // day1_price)
 
     if day1_shares > 0:
@@ -92,7 +93,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         trades.append({
             "date": day1_date.strftime("%Y-%m-%d"),
             "type": "매수",
-            "reason": f"Day 1 초기 진입 (원화 {INITIAL_KRW/2/10000:,.0f}만 원 상당 정수 매수)",
+            "reason": "Day 1 초기 진입 (원화 250만 원 상당 정수 매수)",
             "ticker": target_ticker,
             "shares": day1_shares,
             "price": day1_price,
@@ -127,7 +128,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
 
             # [1순위 - 반등 분할 매도]
             if cycle_in_dd10 and (sig_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
-                min_keep_usd = (INITIAL_KRW / 2.0) / fx_val
+                min_keep_usd = MAX_LEVERAGE_BUY_KRW / fx_val
                 cur_eval_usd = shares * tgt_p
                 if cur_eval_usd >= min_keep_usd:
                     sell_shares = min(shares, cycle_bought_shares)
