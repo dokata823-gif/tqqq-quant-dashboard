@@ -6,6 +6,7 @@ GitHub Pages 배포용 증권사 MTS 스타일 멀티 계좌 index.html 자동 �
 
 import os
 import sys
+import json
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -14,8 +15,9 @@ import yfinance as yf
 # ---------------------------------------------------------
 # 1. 단일 전략 시뮬레이션 엔진 (공통 함수)
 # ---------------------------------------------------------
-def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07", initial_krw=5_000_000.0):
-    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date} | 초기원금: {initial_krw:,.0f}원...")
+def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07", initial_krw=5_000_000.0, max_buy_krw=2_500_000.0):
+    cap_text = f"상한: {max_buy_krw/10000:,.0f}만원" if max_buy_krw is not None else "상한 제외(전액진입)"
+    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date} | 초기원금: {initial_krw:,.0f}원 | {cap_text}...")
     
     # 1) 시세 데이터 수집 (60개월 이평선 산출을 위해 2004년부터)
     sig_df = yf.download(signal_ticker, start="2004-01-01", progress=False)
@@ -77,12 +79,18 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     principal_recovered = False
     lock_base_value = None
 
-    # Day 1 초기 진입 (레버리지 종목 매수 상한선: 250만 원)
-    MAX_LEVERAGE_BUY_KRW = 2_500_000.0
+    # Day 1 초기 진입 (레버리지 매수 상한선 적용 여부)
     day1_date = df.index[0]
     day1_price = float(df['Tgt_Close'].iloc[0])
     day1_fx = float(df['USDKRW'].iloc[0])
-    day1_buy_usd_target = min(MAX_LEVERAGE_BUY_KRW, INITIAL_KRW) / day1_fx
+    
+    if max_buy_krw is not None:
+        day1_buy_usd_target = min(float(max_buy_krw), INITIAL_KRW) / day1_fx
+        reason_str = f"Day 1 초기 진입 (원화 {max_buy_krw/10000:,.0f}만 원 상한 정수 매수)"
+    else:
+        day1_buy_usd_target = INITIAL_KRW / day1_fx
+        reason_str = f"Day 1 초기 진입 (원화 {INITIAL_KRW/10000:,.0f}만 원 전액 정수 매수)"
+
     day1_shares = int(day1_buy_usd_target // day1_price)
 
     if day1_shares > 0:
@@ -93,7 +101,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         trades.append({
             "date": day1_date.strftime("%Y-%m-%d"),
             "type": "매수",
-            "reason": "Day 1 초기 진입 (원화 250만 원 상당 정수 매수)",
+            "reason": reason_str,
             "ticker": target_ticker,
             "shares": day1_shares,
             "price": day1_price,
@@ -128,7 +136,8 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
 
             # [1순위 - 반등 분할 매도]
             if cycle_in_dd10 and (sig_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
-                min_keep_usd = MAX_LEVERAGE_BUY_KRW / fx_val
+                min_keep_krw = float(max_buy_krw) if max_buy_krw is not None else INITIAL_KRW
+                min_keep_usd = min_keep_krw / fx_val
                 cur_eval_usd = shares * tgt_p
                 if cur_eval_usd >= min_keep_usd:
                     sell_shares = min(shares, cycle_bought_shares)
@@ -266,7 +275,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
-                                    })
+                                })
                         rebalance_tier = 1
                 elif sig_dd < -20.0:
                     if rebalance_tier < 2:
@@ -725,7 +734,6 @@ def render_multi_account_html(accounts, output_path="index.html"):
         for acc in accounts
     }
 
-    import json
     acc_js_json = json.dumps(acc_js_meta, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
@@ -890,7 +898,7 @@ def render_multi_account_html(accounts, output_path="index.html"):
 
 
 def main():
-    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X, 2026-06-03 시작, 원금 500만원)
+    # 1) 계좌 1: QQQ -> TQQQ (나스닥 3X, 2026-06-03 시작, 원금 500만원, 250만 원 상한 적용)
     acc_tqqq = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="TQQQ",
@@ -899,10 +907,11 @@ def main():
         account_num="112-92-****01",
         account_title="위탁종합 (나스닥 3X)",
         start_date="2026-06-03",
-        initial_krw=5_000_000.0
+        initial_krw=5_000_000.0,
+        max_buy_krw=2_500_000.0
     )
 
-    # 2) 계좌 2: QQQ -> SOXL (반도체 3X, 2026-09-30 시작, 원금 750만원)
+    # 2) 계좌 2: QQQ -> SOXL (반도체 3X, 2026-09-30 시작, 원금 750만원, 250만 원 상한 적용)
     acc_soxl = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="SOXL",
@@ -911,10 +920,11 @@ def main():
         account_num="112-92-****02",
         account_title="위탁종합 (반도체 3X)",
         start_date="2026-09-30",
-        initial_krw=7_500_000.0
+        initial_krw=7_500_000.0,
+        max_buy_krw=2_500_000.0
     )
 
-    # 3) 계좌 3: QQQ -> QLD (나스닥 2X, 2013-01-07 시작, 원금 500만원)
+    # 3) 계좌 3: QQQ -> QLD (나스닥 2X, 2013-01-07 시작, 원금 500만원, 상한 룰 제외: max_buy_krw=None)
     acc_qld = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="QLD",
@@ -923,7 +933,8 @@ def main():
         account_num="112-92-****03",
         account_title="위탁종합 (나스닥 2X)",
         start_date="2013-01-07",
-        initial_krw=5_000_000.0
+        initial_krw=5_000_000.0,
+        max_buy_krw=None
     )
 
     # 4) 멀티 계좌 MTS HTML 생성
