@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-build.py - QQQ-TQQQ (나스닥 3X) & SOXX-SOXL (반도체 3X) 듀얼 계좌 퀀트 자산배분 매매 시뮬레이션 및
+build.py - QQQ 기반 TQQQ(3X), SOXL(3X), QLD(2X) 멀티 계좌 퀀트 자산배분 매매 시뮬레이션 및
 GitHub Pages 배포용 증권사 MTS 스타일 멀티 계좌 index.html 자동 생성 파이프라인
 """
 
@@ -19,8 +19,8 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     
     # 1) 시세 데이터 수집 (60개월 이평선 산출을 위해 2004년부터)
     sig_df = yf.download(signal_ticker, start="2004-01-01", progress=False)
-    tgt_df = yf.download(target_ticker, start="2010-01-01", progress=False)
-    fx_df = yf.download("USDKRW=X", start="2010-01-01", progress=False)
+    tgt_df = yf.download(target_ticker, start="2004-01-01", progress=False)
+    fx_df = yf.download("USDKRW=X", start="2004-01-01", progress=False)
 
     # MultiIndex 컬럼 평탄화
     for d in [sig_df, tgt_df, fx_df]:
@@ -266,7 +266,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
-                                })
+                                    })
                         rebalance_tier = 1
                 elif sig_dd < -20.0:
                     if rebalance_tier < 2:
@@ -389,10 +389,10 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
 
 
 # ---------------------------------------------------------
-# 2. 멀티 계좌 MTS HTML 생성기
+# 2. 멀티 계좌 MTS HTML 생성기 (TQQQ, SOXL, QLD 등 N개 계좌 지원)
 # ---------------------------------------------------------
-def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
-    print("\n[HTML 생성] QQQ-TQQQ & SOXX-SOXL 듀얼 계좌 MTS index.html 렌더링 중...")
+def render_multi_account_html(accounts, output_path="index.html"):
+    print(f"\n[HTML 생성] {len(accounts)}개 멀티 계좌 MTS index.html 렌더링 중...")
 
     def build_account_views(acc):
         aid = acc["account_id"]
@@ -675,15 +675,65 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
         </div>
         """
 
-    tqqq_views = build_account_views(acc_tqqq)
-    soxl_views = build_account_views(acc_soxl)
+    # 탭 버튼 HTML 생성
+    tab_buttons_html = ""
+    account_views_html = ""
+    footer_accounts_info = []
+
+    dot_colors = ["bg-rose-500", "bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-purple-500"]
+
+    for i, acc in enumerate(accounts):
+        aid = acc["account_id"]
+        is_first = (i == 0)
+        active_btn_class = "bg-slate-800 text-white border border-slate-700 shadow-md" if is_first else "text-slate-400 hover:text-slate-200 border border-transparent"
+        active_view_class = "active" if is_first else ""
+        dot_color = dot_colors[i % len(dot_colors)]
+        
+        profit_color = "text-rose-400" if acc['cum_return_pct'] >= 0 else "text-blue-400"
+        profit_sign = "+" if acc['cum_return_pct'] >= 0 else ""
+
+        tab_buttons_html += f"""
+        <button id="acc-tab-btn-{aid}" onclick="switchAccount('{aid}')" class="py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition {active_btn_class}">
+            <div class="flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full {dot_color}"></span>
+                <span class="font-bold text-[11px] sm:text-xs truncate">{acc['target_ticker']}</span>
+            </div>
+            <div class="text-[10px] sm:text-[11px] font-extrabold {profit_color}">
+                {profit_sign}{acc['cum_return_pct']:,.1f}%
+            </div>
+        </button>
+        """
+
+        account_views_html += f"""
+        <!-- [{acc['target_ticker']}] {acc['account_title']} 뷰 -->
+        <div id="acc-view-{aid}" class="acc-view {active_view_class} space-y-3.5">
+            {build_account_views(acc)}
+        </div>
+        """
+
+        footer_accounts_info.append(f"{acc['target_ticker']} ({acc['start_date'][:4]} 시작 / {acc['initial_krw']/10000:,.0f}만)")
+
+    first_acc = accounts[0]
+    footer_text = " | ".join(footer_accounts_info)
+
+    # JS용 계좌 메타데이터
+    acc_js_meta = {
+        acc["account_id"]: {
+            "title": acc["account_title"],
+            "num": acc["account_num"]
+        }
+        for acc in accounts
+    }
+
+    import json
+    acc_js_json = json.dumps(acc_js_meta, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>위탁종합 퀀트 멀티 계좌 잔고 | TQQQ & SOXL</title>
+    <title>위탁종합 퀀트 멀티 계좌 잔고 | TQQQ • SOXL • QLD</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -719,99 +769,70 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
                 </div>
                 <div>
                     <div class="flex items-center gap-1.5">
-                        <span id="header-acc-name" class="text-xs font-bold text-slate-200">{acc_tqqq['account_title']}</span>
-                        <span id="header-acc-num" class="text-[10px] text-slate-400">{acc_tqqq['account_num']}</span>
+                        <span id="header-acc-name" class="text-xs font-bold text-slate-200">{first_acc['account_title']}</span>
+                        <span id="header-acc-num" class="text-[10px] text-slate-400">{first_acc['account_num']}</span>
                     </div>
                     <div class="text-[10px] text-slate-400 flex items-center gap-1">
                         <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>{acc_tqqq['latest_date']} 기준 (자동갱신)</span>
+                        <span>{first_acc['latest_date']} 기준 (자동갱신)</span>
                     </div>
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">듀얼 계좌 운용</span>
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">트리플 계좌 운용</span>
             </div>
         </div>
     </header>
 
-    <!-- 2. 최상단 메인 계좌 전환 탭 바 (TQQQ / SOXL) -->
+    <!-- 2. 최상단 메인 계좌 전환 탭 바 -->
     <div class="max-w-md mx-auto px-4 pt-3.5">
-        <div class="bg-slate-900/95 p-1 rounded-2xl border border-slate-800 grid grid-cols-2 gap-1.5 shadow-lg">
-            
-            <!-- 계좌 1 탭: TQQQ -->
-            <button id="acc-tab-btn-tqqq" onclick="switchAccount('tqqq')" class="py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md">
-                <div class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                    <span class="font-bold text-xs">나스닥 3X (TQQQ)</span>
-                </div>
-                <div class="text-[11px] font-extrabold text-rose-400">
-                    +{acc_tqqq['cum_return_pct']:,.2f}%
-                </div>
-            </button>
-
-            <!-- 계좌 2 탭: SOXL -->
-            <button id="acc-tab-btn-soxl" onclick="switchAccount('soxl')" class="py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent">
-                <div class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                    <span class="font-bold text-xs">반도체 3X (SOXL)</span>
-                </div>
-                <div class="text-[11px] font-extrabold text-blue-400">
-                    +{acc_soxl['cum_return_pct']:,.2f}%
-                </div>
-            </button>
-
+        <div class="bg-slate-900/95 p-1 rounded-2xl border border-slate-800 grid grid-cols-3 gap-1 shadow-lg">
+            {tab_buttons_html}
         </div>
     </div>
 
     <!-- 메인 컨테이너 -->
     <main class="max-w-md mx-auto px-4 space-y-3.5">
-
-        <!-- ============================================== -->
-        <!-- [ACCOUNT 1] QQQ-TQQQ (나스닥 3X) 뷰 -->
-        <!-- ============================================== -->
-        <div id="acc-view-tqqq" class="acc-view active space-y-3.5">
-            {tqqq_views}
-        </div>
-
-        <!-- ============================================== -->
-        <!-- [ACCOUNT 2] SOXX-SOXL (반도체 3X) 뷰 -->
-        <!-- ============================================== -->
-        <div id="acc-view-soxl" class="acc-view space-y-3.5">
-            {soxl_views}
-        </div>
-
+        {account_views_html}
     </main>
 
     <!-- 하단 고정 정보 바 -->
     <footer class="max-w-md mx-auto text-center text-slate-500 text-[11px] py-6 px-4">
-        <p>Quantitative Dual-Asset Allocation Engine • GitHub Pages Automated</p>
-        <p class="mt-1 text-[10px]">TQQQ (2026.06.03 시작 / 500만) | SOXL (2026.09.30 시작 / 750만)</p>
+        <p>Quantitative Multi-Asset Allocation Engine • GitHub Pages Automated</p>
+        <p class="mt-1 text-[10px]">{footer_text}</p>
     </footer>
 
     <!-- 클라이언트 탭 전환 및 필터 스크립트 -->
     <script>
         lucide.createIcons();
 
+        const accountMeta = {acc_js_json};
+        const allAccountIds = Object.keys(accountMeta);
+
         // 1. 최상단 메인 계좌 전환 함수
         function switchAccount(accId) {{
+            // 계좌 뷰 전환
             document.querySelectorAll('.acc-view').forEach(el => el.classList.remove('active'));
-            document.getElementById('acc-view-' + accId).classList.add('active');
+            const targetView = document.getElementById('acc-view-' + accId);
+            if (targetView) targetView.classList.add('active');
 
-            const btnTqqq = document.getElementById('acc-tab-btn-tqqq');
-            const btnSoxl = document.getElementById('acc-tab-btn-soxl');
-            const headerName = document.getElementById('header-acc-name');
-            const headerNum = document.getElementById('header-acc-num');
+            // 탭 버튼 스타일 전환
+            allAccountIds.forEach(id => {{
+                const btn = document.getElementById('acc-tab-btn-' + id);
+                if (btn) {{
+                    if (id === accId) {{
+                        btn.className = 'py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
+                    }} else {{
+                        btn.className = 'py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
+                    }}
+                }}
+            }});
 
-            if (accId === 'tqqq') {{
-                btnTqqq.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
-                btnSoxl.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
-                headerName.textContent = "{acc_tqqq['account_title']}";
-                headerNum.textContent = "{acc_tqqq['account_num']}";
-            }} else {{
-                btnSoxl.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
-                btnTqqq.className = 'py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
-                headerName.textContent = "{acc_soxl['account_title']}";
-                headerNum.textContent = "{acc_soxl['account_num']}";
+            // 헤더 정보 갱신
+            const meta = accountMeta[accId];
+            if (meta) {{
+                document.getElementById('header-acc-name').textContent = meta.title;
+                document.getElementById('header-acc-num').textContent = meta.num;
             }}
 
             window.scrollTo({{ top: 0, behavior: 'smooth' }});
@@ -820,17 +841,18 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
         // 2. 계좌별 하위 서브탭 (잔고 / 체결내역) 전환 함수
         function switchSubTab(accId, tabName) {{
             document.querySelectorAll('.subtab-content-' + accId).forEach(el => el.style.display = 'none');
-            document.getElementById('subtab-' + accId + '-' + tabName).style.display = 'block';
+            const targetSubtab = document.getElementById('subtab-' + accId + '-' + tabName);
+            if (targetSubtab) targetSubtab.style.display = 'block';
 
             const btnBalance = document.getElementById('subtab-btn-' + accId + '-balance');
             const btnTrades = document.getElementById('subtab-btn-' + accId + '-trades');
 
             if (tabName === 'balance') {{
-                btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
-                btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+                if (btnBalance) btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
+                if (btnTrades) btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
             }} else {{
-                btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
-                btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
+                if (btnTrades) btnTrades.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 transition bg-slate-800 text-white shadow-sm';
+                if (btnBalance) btnBalance.className = 'subtab-btn-' + accId + ' py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-slate-200';
             }}
 
             window.scrollTo({{ top: 0, behavior: 'smooth' }});
@@ -864,7 +886,7 @@ def render_dual_account_html(acc_tqqq, acc_soxl, output_path="index.html"):
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"[4/4] 듀얼 계좌 index.html 생성 완료 -> {output_path}")
+    print(f"[4/4] 멀티 계좌 index.html 생성 완료 -> {output_path}")
 
 
 def main():
@@ -892,9 +914,21 @@ def main():
         initial_krw=7_500_000.0
     )
 
-    # 3) 듀얼 계좌 MTS HTML 생성
-    render_dual_account_html(acc_tqqq, acc_soxl, "index.html")
-    print("\n[SUCCESS] QQQ-TQQQ 및 SOXX-SOXL 듀얼 계좌 대시보드 빌드 성공!")
+    # 3) 계좌 3: QQQ -> QLD (나스닥 2X, 2013-01-07 시작, 원금 500만원)
+    acc_qld = run_quant_strategy(
+        signal_ticker="QQQ",
+        target_ticker="QLD",
+        target_name="ProShares Ultra QQQ (2X)",
+        account_id="qld",
+        account_num="112-92-****03",
+        account_title="위탁종합 (나스닥 2X)",
+        start_date="2013-01-07",
+        initial_krw=5_000_000.0
+    )
+
+    # 4) 멀티 계좌 MTS HTML 생성
+    render_multi_account_html([acc_tqqq, acc_soxl, acc_qld], "index.html")
+    print("\n[SUCCESS] TQQQ, SOXL, QLD 멀티 계좌 대시보드 빌드 성공!")
 
 
 if __name__ == "__main__":
