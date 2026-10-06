@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-build.py - QQQ 기반 TQQQ(3X), SOXL(3X), QLD(2X) 멀티 계좌 퀀트 자산배분 매매 시뮬레이션 및
+build.py - QQQ 기반 TQQQ(3X), SOXL(3X), QLD(2X), QQQI(1X 월배당) 멀티 계좌 퀀트 자산배분 매매 시뮬레이션 및
 GitHub Pages 배포용 증권사 MTS 스타일 멀티 계좌 index.html 자동 생성 파이프라인
 """
 
@@ -398,7 +398,7 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
 
 
 # ---------------------------------------------------------
-# 2. 멀티 계좌 MTS HTML 생성기 (TQQQ, SOXL, QLD 등 N개 계좌 지원)
+# 2. 멀티 계좌 MTS HTML 생성기 (N개 계좌 동적 지원)
 # ---------------------------------------------------------
 def render_multi_account_html(accounts, output_path="index.html"):
     print(f"\n[HTML 생성] {len(accounts)}개 멀티 계좌 MTS index.html 렌더링 중...")
@@ -702,12 +702,12 @@ def render_multi_account_html(accounts, output_path="index.html"):
         profit_sign = "+" if acc['cum_return_pct'] >= 0 else ""
 
         tab_buttons_html += f"""
-        <button id="acc-tab-btn-{aid}" onclick="switchAccount('{aid}')" class="py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition {active_btn_class}">
+        <button id="acc-tab-btn-{aid}" onclick="switchAccount('{aid}')" class="py-2.5 px-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 transition {active_btn_class}">
             <div class="flex items-center gap-1">
                 <span class="w-1.5 h-1.5 rounded-full {dot_color}"></span>
-                <span class="font-bold text-[11px] sm:text-xs truncate">{acc['target_ticker']}</span>
+                <span class="font-bold text-[11px] truncate">{acc['target_ticker']}</span>
             </div>
-            <div class="text-[10px] sm:text-[11px] font-extrabold {profit_color}">
+            <div class="text-[10px] font-extrabold {profit_color}">
                 {profit_sign}{acc['cum_return_pct']:,.1f}%
             </div>
         </button>
@@ -724,6 +724,7 @@ def render_multi_account_html(accounts, output_path="index.html"):
 
     first_acc = accounts[0]
     footer_text = " | ".join(footer_accounts_info)
+    cols_class = f"grid-cols-{len(accounts)}"
 
     # JS용 계좌 메타데이터
     acc_js_meta = {
@@ -741,7 +742,7 @@ def render_multi_account_html(accounts, output_path="index.html"):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>위탁종합 퀀트 멀티 계좌 잔고 | TQQQ • SOXL • QLD</title>
+    <title>위탁종합 퀀트 멀티 계좌 잔고 | TQQQ • SOXL • QLD • QQQI</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -787,14 +788,14 @@ def render_multi_account_html(accounts, output_path="index.html"):
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">트리플 계좌 운용</span>
+                <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-medium">멀티 {len(accounts)}개 계좌</span>
             </div>
         </div>
     </header>
 
     <!-- 2. 최상단 메인 계좌 전환 탭 바 -->
     <div class="max-w-md mx-auto px-4 pt-3.5">
-        <div class="bg-slate-900/95 p-1 rounded-2xl border border-slate-800 grid grid-cols-3 gap-1 shadow-lg">
+        <div class="bg-slate-900/95 p-1 rounded-2xl border border-slate-800 grid {cols_class} gap-1 shadow-lg">
             {tab_buttons_html}
         </div>
     </div>
@@ -829,9 +830,9 @@ def render_multi_account_html(accounts, output_path="index.html"):
                 const btn = document.getElementById('acc-tab-btn-' + id);
                 if (btn) {{
                     if (id === accId) {{
-                        btn.className = 'py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
+                        btn.className = 'py-2.5 px-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-slate-800 text-white border border-slate-700 shadow-md';
                     }} else {{
-                        btn.className = 'py-2.5 px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
+                        btn.className = 'py-2.5 px-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 transition text-slate-400 hover:text-slate-200 border border-transparent';
                     }}
                 }}
             }});
@@ -937,9 +938,22 @@ def main():
         max_buy_krw=None
     )
 
-    # 4) 멀티 계좌 MTS HTML 생성
-    render_multi_account_html([acc_tqqq, acc_soxl, acc_qld], "index.html")
-    print("\n[SUCCESS] TQQQ, SOXL, QLD 멀티 계좌 대시보드 빌드 성공!")
+    # 4) 계좌 4: QQQ -> QQQI (나스닥 1X 월배당, 2024-03-04 시작, 원금 500만원, 상한 룰 제외: max_buy_krw=None)
+    acc_qqqi = run_quant_strategy(
+        signal_ticker="QQQ",
+        target_ticker="QQQI",
+        target_name="NEOS Nasdaq-100 High Income ETF",
+        account_id="qqqi",
+        account_num="112-92-****04",
+        account_title="위탁종합 (나스닥 월배당)",
+        start_date="2024-03-04",
+        initial_krw=5_000_000.0,
+        max_buy_krw=None
+    )
+
+    # 5) 멀티 계좌 MTS HTML 생성
+    render_multi_account_html([acc_tqqq, acc_soxl, acc_qld, acc_qqqi], "index.html")
+    print("\n[SUCCESS] TQQQ, SOXL, QLD, QQQI 멀티 계좌 대시보드 빌드 성공!")
 
 
 if __name__ == "__main__":
