@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-build.py - QQQ 기반 TQQQ(3X), SOXL(3X), QLD(2X), QQQI(1X 월배당) 멀티 계좌 퀀트 자산배분 매매 시뮬레이션 및
+build.py - QQQ 기반 TQQQ(3X), SOXL(3X), QLD(2X), QQQI+TQQQ(하이브리드) 멀티 계좌 퀀트 자산배분 매매 시뮬레이션 및
 GitHub Pages 배포용 증권사 MTS 스타일 멀티 계좌 index.html 자동 생성 파이프라인
 """
 
@@ -15,45 +15,74 @@ import yfinance as yf
 # ---------------------------------------------------------
 # 1. 단일 전략 시뮬레이션 엔진 (공통 함수)
 # ---------------------------------------------------------
-def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, account_num, account_title, start_date="2025-01-07", initial_krw=5_000_000.0, max_buy_krw=2_500_000.0):
-    cap_text = f"상한: {max_buy_krw/10000:,.0f}만원" if max_buy_krw is not None else "상한 제외(전액진입)"
-    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}) 시작일: {start_date} | 초기원금: {initial_krw:,.0f}원 | {cap_text}...")
-    
-    # 1) 시세 데이터 수집 (60개월 이평선 산출을 위해 2004년부터)
-    sig_df = yf.download(signal_ticker, start="2004-01-01", progress=False)
-    tgt_df = yf.download(target_ticker, start="2004-01-01", progress=False)
-    fx_df = yf.download("USDKRW=X", start="2004-01-01", progress=False)
+def run_quant_strategy(
+    signal_ticker,
+    target_ticker,
+    target_name,
+    account_id,
+    account_num,
+    account_title,
+    start_date="2025-01-07",
+    initial_krw=5_000_000.0,
+    max_buy_krw=2_500_000.0,
+    dip_ticker=None,
+    dip_name=None
+):
+    is_hybrid = (dip_ticker is not None) and (dip_ticker != target_ticker)
+    if not is_hybrid:
+        dip_ticker = target_ticker
+        dip_name = target_name
+    elif dip_name is None:
+        dip_name = dip_ticker
 
-    # MultiIndex 컬럼 평탄화
-    for d in [sig_df, tgt_df, fx_df]:
-        if isinstance(d.columns, pd.MultiIndex):
-            d.columns = d.columns.get_level_values(0)
+    cap_text = f"Day1 상한: {max_buy_krw/10000:,.0f}만원" if max_buy_krw is not None else "Day1 전액진입"
+    hybrid_text = f" [하이브리드: 코어 {target_ticker} / 하락장 {dip_ticker}]" if is_hybrid else ""
+    print(f"\n[시뮬레이션 실행] {account_title} ({signal_ticker} -> {target_ticker}{hybrid_text}) 시작일: {start_date} | 초기원금: {initial_krw:,.0f}원 | {cap_text}...")
+    
+    # 1) 시세 데이터 수집
+    tickers_to_fetch = list(set([signal_ticker, target_ticker, dip_ticker, "USDKRW=X"]))
+    data = yf.download(tickers_to_fetch, start="2004-01-01", progress=False)
+
+    def extract_close(ticker):
+        if ('Close', ticker) in data.columns:
+            return data[('Close', ticker)]
+        elif ticker in data['Close'].columns:
+            return data['Close'][ticker]
+        return data['Close']
+
+    def extract_high(ticker):
+        if ('High', ticker) in data.columns:
+            return data[('High', ticker)]
+        elif ticker in data['High'].columns:
+            return data['High'][ticker]
+        return data['High']
+
+    sig_close = extract_close(signal_ticker)
+    sig_high = extract_high(signal_ticker)
+    tgt_close = extract_close(target_ticker)
+    dip_close = extract_close(dip_ticker)
+    fx_close = extract_close("USDKRW=X")
 
     # 2) 신호 종목 지표 산출
-    sig_df['ATH'] = sig_df['High'].cummax()
-    sig_df['DD'] = (sig_df['Close'] - sig_df['ATH']) / sig_df['ATH'] * 100.0
-    sig_df['MA1260'] = sig_df['Close'].rolling(window=1260).mean()
-    sig_df['Disparity'] = ((sig_df['Close'] / sig_df['MA1260']) - 1.0) * 100.0
+    sig_ath = sig_high.cummax()
+    sig_dd = (sig_close - sig_ath) / sig_ath * 100.0
+    sig_ma1260 = sig_close.rolling(window=1260).mean()
+    sig_disp = ((sig_close / sig_ma1260) - 1.0) * 100.0
 
     # 3) 시작일 이후 데이터 결합
-    avail_dates = tgt_df.loc[tgt_df.index >= start_date].index
+    avail_dates = tgt_close.loc[tgt_close.index >= start_date].dropna().index
     if len(avail_dates) == 0:
-        avail_dates = tgt_df.index[-100:]
+        avail_dates = tgt_close.dropna().index[-100:]
 
     dates = avail_dates
     df = pd.DataFrame(index=dates)
-    df['Sig_Close'] = sig_df['Close'].reindex(dates).ffill()
-    df['Sig_High'] = sig_df['High'].reindex(dates).ffill()
-    df['Sig_ATH'] = sig_df['ATH'].reindex(dates).ffill()
-    df['Sig_DD'] = sig_df['DD'].reindex(dates).ffill()
-    df['Sig_MA1260'] = sig_df['MA1260'].reindex(dates).ffill()
-    df['Sig_Disparity'] = sig_df['Disparity'].reindex(dates).fillna(0.0)
+    df['Sig_DD'] = sig_dd.reindex(dates).ffill()
+    df['Sig_Disparity'] = sig_disp.reindex(dates).fillna(0.0)
+    df['Tgt_Close'] = tgt_close.reindex(dates).ffill()
+    df['Dip_Close'] = dip_close.reindex(dates).ffill()
+    df['USDKRW'] = fx_close.reindex(dates).bfill().ffill()
 
-    df['Tgt_Close'] = tgt_df['Close'].reindex(dates).ffill()
-    df['USDKRW'] = fx_df['Close'].reindex(dates).ffill()
-
-    df = df.dropna(subset=['Tgt_Close', 'Sig_Close'])
-    df['USDKRW'] = df['USDKRW'].bfill().ffill()
+    df = df.dropna(subset=['Tgt_Close', 'Dip_Close'])
 
     # 월말 영업일 여부 마킹
     df['YearMonth'] = df.index.to_period('M')
@@ -66,45 +95,60 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     INITIAL_USD = INITIAL_KRW / init_fx
 
     usd_cash = INITIAL_USD
+    
+    # 코어 종목 수량 및 평단
+    tgt_shares = 0
+    tgt_avg_price = 0.0
+
+    # 하락장 종목 수량 및 평단 (하이브리드 계좌용)
+    dip_shares = 0
+    dip_avg_price = 0.0
+    
+    # 단일 종목 계좌용 통합 수량
     shares = 0
     avg_price = 0.0
+    cycle_bought_shares = 0
 
     trades = []
     daily_history = []
 
     cycle_in_dd10 = False
     rebound_sold = False
-    cycle_bought_shares = 0
     rebalance_tier = 0
     principal_recovered = False
     lock_base_value = None
 
-    # Day 1 초기 진입 (레버리지 매수 상한선 적용 여부)
+    # Day 1 초기 진입
     day1_date = df.index[0]
-    day1_price = float(df['Tgt_Close'].iloc[0])
+    day1_tgt_p = float(df['Tgt_Close'].iloc[0])
     day1_fx = float(df['USDKRW'].iloc[0])
     
     if max_buy_krw is not None:
         day1_buy_usd_target = min(float(max_buy_krw), INITIAL_KRW) / day1_fx
-        reason_str = f"Day 1 초기 진입 (원화 {max_buy_krw/10000:,.0f}만 원 상한 정수 매수)"
+        reason_str = f"Day 1 초기 진입 (원화 {max_buy_krw/10000:,.0f}만 원 상당 정수 매수)"
     else:
         day1_buy_usd_target = INITIAL_KRW / day1_fx
         reason_str = f"Day 1 초기 진입 (원화 {INITIAL_KRW/10000:,.0f}만 원 전액 정수 매수)"
 
-    day1_shares = int(day1_buy_usd_target // day1_price)
+    day1_tgt_shares = int(day1_buy_usd_target // day1_tgt_p)
 
-    if day1_shares > 0:
-        cost = day1_shares * day1_price
+    if day1_tgt_shares > 0:
+        cost = day1_tgt_shares * day1_tgt_p
         usd_cash -= cost
-        shares += day1_shares
-        avg_price = day1_price
+        if is_hybrid:
+            tgt_shares = day1_tgt_shares
+            tgt_avg_price = day1_tgt_p
+        else:
+            shares = day1_tgt_shares
+            avg_price = day1_tgt_p
+
         trades.append({
             "date": day1_date.strftime("%Y-%m-%d"),
             "type": "매수",
             "reason": reason_str,
             "ticker": target_ticker,
-            "shares": day1_shares,
-            "price": day1_price,
+            "shares": day1_tgt_shares,
+            "price": day1_tgt_p,
             "amount_usd": cost,
             "amount_krw": cost * day1_fx,
             "cash_after": usd_cash
@@ -113,61 +157,89 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     # 5) 일별 시뮬레이션 루프
     for idx, (dt, row) in enumerate(df.iterrows()):
         tgt_p = float(row['Tgt_Close'])
-        sig_dd = float(row['Sig_DD'])
+        dip_p = float(row['Dip_Close'])
+        sig_dd_val = float(row['Sig_DD'])
         disparity = float(row['Sig_Disparity'])
         fx_val = float(row['USDKRW'])
         is_m_end = bool(row['Is_Month_End'])
         dt_str = dt.strftime("%Y-%m-%d")
 
-        total_equity_usd = usd_cash + (shares * tgt_p)
+        if is_hybrid:
+            cur_stock_eval_usd = (tgt_shares * tgt_p) + (dip_shares * dip_p)
+        else:
+            cur_stock_eval_usd = shares * tgt_p
+
+        total_equity_usd = usd_cash + cur_stock_eval_usd
         total_return_pct = ((total_equity_usd / INITIAL_USD) - 1.0) * 100.0
 
         if idx > 0:
             # 사이클 상태 갱신
-            if sig_dd >= -0.5:
+            if sig_dd_val >= -0.5:
                 cycle_in_dd10 = False
                 rebound_sold = False
                 cycle_bought_shares = 0
                 rebalance_tier = 0
-            elif sig_dd <= -10.0:
+            elif sig_dd_val <= -10.0:
                 cycle_in_dd10 = True
 
             sold_today = False
 
-            # [1순위 - 반등 분할 매도]
-            if cycle_in_dd10 and (sig_dd >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
-                min_keep_krw = float(max_buy_krw) if max_buy_krw is not None else INITIAL_KRW
-                min_keep_usd = min_keep_krw / fx_val
-                cur_eval_usd = shares * tgt_p
-                if cur_eval_usd >= min_keep_usd:
-                    sell_shares = min(shares, cycle_bought_shares)
-                    if sell_shares > 0:
-                        sold_amount = sell_shares * tgt_p
+            # [1순위 - 반등 분할 매도: 하락장 추가 매수분 익절]
+            if is_hybrid:
+                if cycle_in_dd10 and (sig_dd_val >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (dip_shares > 0):
+                    sell_sh = min(dip_shares, cycle_bought_shares)
+                    if sell_sh > 0:
+                        sold_amount = sell_sh * dip_p
                         usd_cash += sold_amount
-                        shares -= sell_shares
+                        dip_shares -= sell_sh
                         cycle_bought_shares = 0
                         rebound_sold = True
                         sold_today = True
                         trades.append({
                             "date": dt_str,
                             "type": "매도",
-                            "reason": f"1순위 반등 분할 매도 (하락장 추가 매수분 {sell_shares}주 익절 매도)",
-                            "ticker": target_ticker,
-                            "shares": sell_shares,
-                            "price": tgt_p,
+                            "reason": f"1순위 반등 분할 매도 (하락장 추가 매수 {dip_ticker} {sell_sh}주 익절 매도)",
+                            "ticker": dip_ticker,
+                            "shares": sell_sh,
+                            "price": dip_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
+            else:
+                if cycle_in_dd10 and (sig_dd_val >= -5.0) and (not rebound_sold) and (cycle_bought_shares > 0) and (shares > 0):
+                    min_keep_krw = float(max_buy_krw) if max_buy_krw is not None else INITIAL_KRW
+                    min_keep_usd = min_keep_krw / fx_val
+                    cur_eval_usd = shares * tgt_p
+                    if cur_eval_usd >= min_keep_usd:
+                        sell_sh = min(shares, cycle_bought_shares)
+                        if sell_sh > 0:
+                            sold_amount = sell_sh * tgt_p
+                            usd_cash += sold_amount
+                            shares -= sell_sh
+                            cycle_bought_shares = 0
+                            rebound_sold = True
+                            sold_today = True
+                            trades.append({
+                                "date": dt_str,
+                                "type": "매도",
+                                "reason": f"1순위 반등 분할 매도 (하락장 추가 매수분 {sell_sh}주 익절 매도)",
+                                "ticker": target_ticker,
+                                "shares": sell_sh,
+                                "price": tgt_p,
+                                "amount_usd": sold_amount,
+                                "amount_krw": sold_amount * fx_val,
+                                "cash_after": usd_cash
+                            })
 
-            # [2순위 - 원금 회수]
-            elif (not principal_recovered) and (total_return_pct >= 200.0) and (shares > 0):
+            # [2순위 - 원금 회수: 단일 종목 계좌]
+            if (not is_hybrid) and (not sold_today) and (not principal_recovered) and (total_return_pct >= 200.0) and (shares > 0):
                 recover_target_usd = INITIAL_USD
-                sell_shares = min(shares, int(recover_target_usd // tgt_p))
-                if sell_shares > 0:
-                    sold_amount = sell_shares * tgt_p
+                sell_sh = min(shares, int(recover_target_usd // tgt_p))
+                if sell_sh > 0:
+                    sold_amount = sell_sh * tgt_p
                     usd_cash += sold_amount
-                    shares -= sell_shares
+                    shares -= sell_sh
                     principal_recovered = True
                     sold_today = True
                     trades.append({
@@ -175,24 +247,24 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
                         "type": "매도",
                         "reason": f"2순위 원금 회수 (누적 수익률 +200% 달성)",
                         "ticker": target_ticker,
-                        "shares": sell_shares,
+                        "shares": sell_sh,
                         "price": tgt_p,
                         "amount_usd": sold_amount,
                         "amount_krw": sold_amount * fx_val,
                         "cash_after": usd_cash
                     })
 
-            # [3순위 - 총액고정법]
-            elif principal_recovered and (shares > 0):
+            # [3순위 - 총액고정법: 단일 종목 계좌]
+            elif (not is_hybrid) and (not sold_today) and principal_recovered and (shares > 0):
                 if (lock_base_value is None) and (total_return_pct >= 300.0):
                     lock_base_value = total_equity_usd
                 elif lock_base_value is not None and (total_equity_usd >= lock_base_value * 1.05):
                     excess_usd = lock_base_value * 0.05
-                    sell_shares = min(shares, int(excess_usd // tgt_p))
-                    if sell_shares > 0:
-                        sold_amount = sell_shares * tgt_p
+                    sell_sh = min(shares, int(excess_usd // tgt_p))
+                    if sell_sh > 0:
+                        sold_amount = sell_sh * tgt_p
                         usd_cash += sold_amount
-                        shares -= sell_shares
+                        shares -= sell_sh
                         lock_base_value = usd_cash + (shares * tgt_p)
                         sold_today = True
                         trades.append({
@@ -200,110 +272,130 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
                             "type": "매도",
                             "reason": f"3순위 총액고정법 (기준액 대비 5% 초과 수익 실현)",
                             "ticker": target_ticker,
-                            "shares": sell_shares,
+                            "shares": sell_sh,
                             "price": tgt_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
 
-            # [상시 - 월봉 이격도 과열 매도]
-            if (not sold_today) and is_m_end and (disparity >= 50.0) and (shares > 0):
+            # [상시 - 월봉 이격도 과열 매도: 단일 종목 계좌]
+            if (not is_hybrid) and (not sold_today) and is_m_end and (disparity >= 50.0) and (shares > 0):
                 target_stock_usd = total_equity_usd * 0.70
                 cur_stock_usd = shares * tgt_p
                 if cur_stock_usd > target_stock_usd:
                     excess_usd = cur_stock_usd - target_stock_usd
-                    sell_shares = int(excess_usd // tgt_p)
-                    if sell_shares > 0:
-                        sold_amount = sell_shares * tgt_p
+                    sell_sh = int(excess_usd // tgt_p)
+                    if sell_sh > 0:
+                        sold_amount = sell_sh * tgt_p
                         usd_cash += sold_amount
-                        shares -= sell_shares
+                        shares -= sell_sh
                         sold_today = True
                         trades.append({
                             "date": dt_str,
                             "type": "매도",
                             "reason": f"상시 월봉 이격도 과열 조절 (7:3 리밸런싱)",
                             "ticker": target_ticker,
-                            "shares": sell_shares,
+                            "shares": sell_sh,
                             "price": tgt_p,
                             "amount_usd": sold_amount,
                             "amount_krw": sold_amount * fx_val,
                             "cash_after": usd_cash
                         })
 
-            # 하락장 매수 규칙
+            # 하락장 매수 규칙 (dip_ticker 매수 집행)
             if not sold_today:
-                if sig_dd > -10.0:
+                active_buy_p = dip_p if is_hybrid else tgt_p
+                active_buy_ticker = dip_ticker if is_hybrid else target_ticker
+
+                if sig_dd_val > -10.0:
                     pass
-                elif -15.0 <= sig_dd <= -10.0:
-                    if usd_cash >= tgt_p:
-                        usd_cash -= tgt_p
-                        avg_price = ((shares * avg_price) + tgt_p) / (shares + 1)
-                        shares += 1
+                elif -15.0 <= sig_dd_val <= -10.0:
+                    if usd_cash >= active_buy_p:
+                        usd_cash -= active_buy_p
+                        if is_hybrid:
+                            dip_avg_price = ((dip_shares * dip_avg_price) + active_buy_p) / (dip_shares + 1)
+                            dip_shares += 1
+                        else:
+                            avg_price = ((shares * avg_price) + active_buy_p) / (shares + 1)
+                            shares += 1
                         cycle_bought_shares += 1
                         trades.append({
                             "date": dt_str,
                             "type": "매수",
-                            "reason": f"하락장 분할 매수 1주 ({signal_ticker} DD {sig_dd:.1f}%)",
-                            "ticker": target_ticker,
+                            "reason": f"하락장 분할 매수 1주 ({signal_ticker} DD {sig_dd_val:.1f}%)",
+                            "ticker": active_buy_ticker,
                             "shares": 1,
-                            "price": tgt_p,
-                            "amount_usd": tgt_p,
-                            "amount_krw": tgt_p * fx_val,
+                            "price": active_buy_p,
+                            "amount_usd": active_buy_p,
+                            "amount_krw": active_buy_p * fx_val,
                             "cash_after": usd_cash
                         })
-                elif -20.0 <= sig_dd < -15.0:
+                elif -20.0 <= sig_dd_val < -15.0:
                     if rebalance_tier < 1:
                         target_stock_usd = total_equity_usd * 0.80
-                        cur_stock_usd = shares * tgt_p
+                        cur_stock_usd = ((tgt_shares * tgt_p) + (dip_shares * dip_p)) if is_hybrid else (shares * tgt_p)
                         if target_stock_usd > cur_stock_usd:
                             needed_usd = min(usd_cash, target_stock_usd - cur_stock_usd)
-                            buy_shares = int(needed_usd // tgt_p)
-                            if buy_shares > 0:
-                                cost = buy_shares * tgt_p
+                            buy_sh = int(needed_usd // active_buy_p)
+                            if buy_sh > 0:
+                                cost = buy_sh * active_buy_p
                                 usd_cash -= cost
-                                avg_price = ((shares * avg_price) + cost) / (shares + buy_shares)
-                                shares += buy_shares
-                                cycle_bought_shares += buy_shares
+                                if is_hybrid:
+                                    dip_avg_price = ((dip_shares * dip_avg_price) + cost) / (dip_shares + buy_sh)
+                                    dip_shares += buy_sh
+                                else:
+                                    avg_price = ((shares * avg_price) + cost) / (shares + buy_sh)
+                                    shares += buy_sh
+                                cycle_bought_shares += buy_sh
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
-                                    "reason": f"구간 리밸런싱 8:2 비중 ({signal_ticker} DD {sig_dd:.1f}%)",
-                                    "ticker": target_ticker,
-                                    "shares": buy_shares,
-                                    "price": tgt_p,
+                                    "reason": f"구간 리밸런싱 8:2 비중 ({signal_ticker} DD {sig_dd_val:.1f}%)",
+                                    "ticker": active_buy_ticker,
+                                    "shares": buy_sh,
+                                    "price": active_buy_p,
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
                                 })
                         rebalance_tier = 1
-                elif sig_dd < -20.0:
+                elif sig_dd_val < -20.0:
                     if rebalance_tier < 2:
                         target_stock_usd = total_equity_usd * 0.90
-                        cur_stock_usd = shares * tgt_p
+                        cur_stock_usd = ((tgt_shares * tgt_p) + (dip_shares * dip_p)) if is_hybrid else (shares * tgt_p)
                         if target_stock_usd > cur_stock_usd:
                             needed_usd = min(usd_cash, target_stock_usd - cur_stock_usd)
-                            buy_shares = int(needed_usd // tgt_p)
-                            if buy_shares > 0:
-                                cost = buy_shares * tgt_p
+                            buy_sh = int(needed_usd // active_buy_p)
+                            if buy_sh > 0:
+                                cost = buy_sh * active_buy_p
                                 usd_cash -= cost
-                                avg_price = ((shares * avg_price) + cost) / (shares + buy_shares)
-                                shares += buy_shares
-                                cycle_bought_shares += buy_shares
+                                if is_hybrid:
+                                    dip_avg_price = ((dip_shares * dip_avg_price) + cost) / (dip_shares + buy_sh)
+                                    dip_shares += buy_sh
+                                else:
+                                    avg_price = ((shares * avg_price) + cost) / (shares + buy_sh)
+                                    shares += buy_sh
+                                cycle_bought_shares += buy_sh
                                 trades.append({
                                     "date": dt_str,
                                     "type": "매수",
-                                    "reason": f"구간 리밸런싱 9:1 비중 ({signal_ticker} DD {sig_dd:.1f}%)",
-                                    "ticker": target_ticker,
-                                    "shares": buy_shares,
-                                    "price": tgt_p,
+                                    "reason": f"구간 리밸런싱 9:1 비중 ({signal_ticker} DD {sig_dd_val:.1f}%)",
+                                    "ticker": active_buy_ticker,
+                                    "shares": buy_sh,
+                                    "price": active_buy_p,
                                     "amount_usd": cost,
                                     "amount_krw": cost * fx_val,
                                     "cash_after": usd_cash
                                 })
                         rebalance_tier = 2
 
-        final_total_usd = usd_cash + (shares * tgt_p)
+        if is_hybrid:
+            final_stock_eval_usd = (tgt_shares * tgt_p) + (dip_shares * dip_p)
+        else:
+            final_stock_eval_usd = shares * tgt_p
+
+        final_total_usd = usd_cash + final_stock_eval_usd
         final_total_krw = final_total_usd * fx_val
 
         daily_history.append({
@@ -312,9 +404,12 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
             "total_krw": final_total_krw,
             "cash_usd": usd_cash,
             "shares": shares,
-            "price": tgt_p,
+            "tgt_shares": tgt_shares,
+            "tgt_price": tgt_p,
+            "dip_shares": dip_shares,
+            "dip_price": dip_p,
             "fx": fx_val,
-            "sig_dd": sig_dd,
+            "sig_dd": sig_dd_val,
             "disparity": disparity
         })
 
@@ -323,29 +418,65 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
     cur_dd = float(last_row['Sig_DD'])
     cur_disp = float(last_row['Sig_Disparity'])
 
+    target_action_ticker = dip_ticker if is_hybrid else target_ticker
+
     if cur_dd > -10.0:
         signal_title = "관망 및 현금 대기 중"
         signal_desc = f"{signal_ticker} 고점 대비 낙폭이 -10% 미만({cur_dd:.2f}%)으로 안정 구간입니다. 신규 매수 없이 대기합니다."
         signal_badge = "bg-blue-500/20 text-blue-400 border-blue-500/30"
         signal_icon = "shield"
     elif -15.0 <= cur_dd <= -10.0:
-        signal_title = "매일 1주 분할 매수 구간"
-        signal_desc = f"{signal_ticker} 낙폭이 -10%~-15% 구간({cur_dd:.2f}%)입니다. 가용 현금 내 매 영업일 {target_ticker} 1주씩 정량 매수합니다."
+        signal_title = f"매일 {target_action_ticker} 1주 분할 매수 구간"
+        signal_desc = f"{signal_ticker} 낙폭이 -10%~-15% 구간({cur_dd:.2f}%)입니다. 가용 현금 내 매 영업일 {target_action_ticker} 1주씩 정량 매수합니다."
         signal_badge = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
         signal_icon = "shopping-cart"
     elif -20.0 <= cur_dd < -15.0:
         signal_title = "8:2 비중 리밸런싱 구간"
-        signal_desc = f"{signal_ticker} 낙폭 -15%~-20% 구간({cur_dd:.2f}%)입니다. {target_ticker} 80% : 현금 20% 비중으로 맞추는 집중 매수 구간입니다."
+        signal_desc = f"{signal_ticker} 낙폭 -15%~-20% 구간({cur_dd:.2f}%)입니다. 주식 80% : 현금 20% 비중으로 {target_action_ticker} 집중 매수 구간입니다."
         signal_badge = "bg-amber-500/20 text-amber-400 border-amber-500/30"
         signal_icon = "layers"
     else:
         signal_title = "9:1 비중 적극 리밸런싱 구간"
-        signal_desc = f"{signal_ticker} 낙폭 -20% 초과({cur_dd:.2f}%) 대하락장입니다. {target_ticker} 90% : 현금 10% 비중으로 강력 리밸런싱 매수를 집행합니다."
+        signal_desc = f"{signal_ticker} 낙폭 -20% 초과({cur_dd:.2f}%) 대하락장입니다. 주식 90% : 현금 10% 비중으로 {target_action_ticker} 강력 리밸런싱 매수를 집행합니다."
         signal_badge = "bg-rose-500/20 text-rose-400 border-rose-500/30"
         signal_icon = "flame"
 
     total_buy_count = sum(1 for t in trades if t['type'] == "매수")
     total_sell_count = sum(1 for t in trades if t['type'] == "매도")
+
+    if is_hybrid:
+        tgt_eval_usd = tgt_shares * latest['tgt_price']
+        tgt_eval_krw = tgt_eval_usd * latest['fx']
+        tgt_profit_pct = ((latest['tgt_price'] / tgt_avg_price) - 1.0) * 100.0 if tgt_avg_price > 0 else 0.0
+        tgt_profit_usd = (tgt_shares * latest['tgt_price']) - (tgt_shares * tgt_avg_price)
+
+        dip_eval_usd = dip_shares * latest['dip_price']
+        dip_eval_krw = dip_eval_usd * latest['fx']
+        dip_profit_pct = ((latest['dip_price'] / dip_avg_price) - 1.0) * 100.0 if dip_avg_price > 0 else 0.0
+        dip_profit_usd = (dip_shares * latest['dip_price']) - (dip_shares * dip_avg_price)
+
+        total_stock_eval_usd = tgt_eval_usd + dip_eval_usd
+        main_shares = tgt_shares
+        main_price = latest['tgt_price']
+        main_avg_price = tgt_avg_price
+        main_eval_usd = tgt_eval_usd
+        main_eval_krw = tgt_eval_krw
+        main_profit_pct = tgt_profit_pct
+        main_profit_usd = tgt_profit_usd
+    else:
+        total_stock_eval_usd = shares * latest['tgt_price']
+        main_shares = shares
+        main_price = latest['tgt_price']
+        main_avg_price = avg_price
+        main_eval_usd = shares * latest['tgt_price']
+        main_eval_krw = main_eval_usd * latest['fx']
+        main_profit_pct = ((latest['tgt_price'] / avg_price) - 1.0) * 100.0 if avg_price > 0 else 0.0
+        main_profit_usd = (shares * latest['tgt_price']) - (shares * avg_price)
+        
+        dip_eval_usd = 0.0
+        dip_eval_krw = 0.0
+        dip_profit_pct = 0.0
+        dip_profit_usd = 0.0
 
     result = {
         "account_id": account_id,
@@ -354,6 +485,9 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         "signal_ticker": signal_ticker,
         "target_ticker": target_ticker,
         "target_name": target_name,
+        "dip_ticker": dip_ticker,
+        "dip_name": dip_name,
+        "is_hybrid": is_hybrid,
         "start_date": df.index[0].strftime("%Y년 %m월 %d일"),
         "latest_date": df.index[-1].strftime("%Y년 %m월 %d일"),
         "initial_krw": INITIAL_KRW,
@@ -370,14 +504,24 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         "cash_ratio": (latest['cash_usd'] / latest['total_usd']) * 100.0,
         "fx_rate": latest['fx'],
         
-        "shares": latest['shares'],
-        "price": latest['price'],
-        "avg_price": avg_price,
-        "eval_usd": latest['shares'] * latest['price'],
-        "eval_krw": latest['shares'] * latest['price'] * latest['fx'],
-        "stock_ratio": ((latest['shares'] * latest['price']) / latest['total_usd']) * 100.0,
-        "profit_pct": ((latest['price'] / avg_price) - 1.0) * 100.0 if avg_price > 0 else 0.0,
-        "profit_usd": (latest['shares'] * latest['price']) - (latest['shares'] * avg_price),
+        # 코어/메인 종목 데이터
+        "shares": main_shares,
+        "price": main_price,
+        "avg_price": main_avg_price,
+        "eval_usd": main_eval_usd,
+        "eval_krw": main_eval_krw,
+        "stock_ratio": (total_stock_eval_usd / latest['total_usd']) * 100.0,
+        "profit_pct": main_profit_pct,
+        "profit_usd": main_profit_usd,
+
+        # 하락장 전술 종목 데이터
+        "dip_shares": dip_shares,
+        "dip_price": latest['dip_price'],
+        "dip_avg_price": dip_avg_price,
+        "dip_eval_usd": dip_eval_usd,
+        "dip_eval_krw": dip_eval_krw,
+        "dip_profit_pct": dip_profit_pct,
+        "dip_profit_usd": dip_profit_usd,
         
         "sig_dd": cur_dd,
         "disparity": cur_disp,
@@ -393,7 +537,10 @@ def run_quant_strategy(signal_ticker, target_ticker, target_name, account_id, ac
         "total_sell_count": total_sell_count
     }
 
-    print(f" -> {account_title} 완료: 총자산 KRW {result['total_krw']:,.0f} ({result['cum_return_pct']:+.2f}%) | {target_ticker} {result['shares']}주 | 예수금 ${result['cash_usd']:,.2f} | 체결 {result['total_trade_count']}회")
+    if is_hybrid:
+        print(f" -> {account_title} 완료: 총자산 KRW {result['total_krw']:,.0f} ({result['cum_return_pct']:+.2f}%) | 코어 {target_ticker} {result['shares']}주 | 하락장 {dip_ticker} {result['dip_shares']}주 | 예수금 ${result['cash_usd']:,.2f} | 체결 {result['total_trade_count']}회")
+    else:
+        print(f" -> {account_title} 완료: 총자산 KRW {result['total_krw']:,.0f} ({result['cum_return_pct']:+.2f}%) | {target_ticker} {result['shares']}주 | 예수금 ${result['cash_usd']:,.2f} | 체결 {result['total_trade_count']}회")
     return result
 
 
@@ -460,12 +607,102 @@ def render_multi_account_html(accounts, output_path="index.html"):
                     <div class="flex items-center gap-1.5">
                         {type_badge}
                         <span class="font-bold text-white text-[12px]">{t['date']}</span>
+                        <span class="text-[10px] bg-slate-800 text-slate-300 px-1 py-0.2 rounded">{t['ticker']}</span>
                     </div>
                     <p class="text-[11px] text-slate-400 truncate max-w-[190px] sm:max-w-xs">{t['reason']}</p>
                 </div>
                 <div class="text-right space-y-0.5">
                     <div class="{shares_color} text-xs">{shares_text}</div>
                     <div class="text-[10px] text-slate-400">@ ${t['price']:,.2f}</div>
+                </div>
+            </div>
+            """
+
+        # 보유 종목 카드 렌더링
+        if acc['is_hybrid']:
+            stock_cards_html = f"""
+            <!-- 하이브리드 보유 종목 카드: 코어(QQQI) + 하락장 전술(TQQQ) -->
+            <div class="mts-card rounded-2xl p-4 shadow-lg space-y-3">
+                <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <div class="flex items-center gap-1.5">
+                        <i data-lucide="layers" class="w-4 h-4 text-indigo-400"></i>
+                        <span class="font-extrabold text-white text-sm">보유 포트폴리오</span>
+                        <span class="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded font-bold">코어 + 하락장 3X 전술</span>
+                    </div>
+                    <span class="text-xs font-bold text-indigo-400">주식 총 비중 {acc['stock_ratio']:.1f}%</span>
+                </div>
+
+                <!-- 1. 코어 종목 (QQQI) -->
+                <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <span class="font-extrabold text-white text-sm">{acc['target_ticker']}</span>
+                            <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">코어 월배당</span>
+                        </div>
+                        <span class="font-bold text-white text-xs">{acc['shares']} 주</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/60">
+                        <div>평가액: <span class="text-white font-bold">₩{acc['eval_krw']:,.0f}</span> (${acc['eval_usd']:,.2f})</div>
+                        <div class="text-right">수익률: <span class="font-bold text-rose-400">+{acc['profit_pct']:,.2f}%</span></div>
+                    </div>
+                </div>
+
+                <!-- 2. 하락장 전술 종목 (TQQQ) -->
+                <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <span class="font-extrabold text-white text-sm">{acc['dip_ticker']}</span>
+                            <span class="text-[10px] bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded font-bold">하락장 매수분</span>
+                        </div>
+                        <span class="font-bold text-white text-xs">{acc['dip_shares']} 주</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/60">
+                        <div>평가액: <span class="text-white font-bold">₩{acc['dip_eval_krw']:,.0f}</span> (${acc['dip_eval_usd']:,.2f})</div>
+                        <div class="text-right">수익률: <span class="font-bold text-rose-400">+{acc['dip_profit_pct']:,.2f}%</span></div>
+                    </div>
+                </div>
+            </div>
+            """
+        else:
+            stock_cards_html = f"""
+            <!-- 단일 종목 보유 카드 -->
+            <div class="mts-card rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5">
+                        <span class="font-extrabold text-white text-base">{acc['target_ticker']}</span>
+                        <span class="text-[11px] text-slate-400">{acc['target_name']}</span>
+                    </div>
+                    <span class="text-xs font-bold text-indigo-400">비중 {acc['stock_ratio']:.1f}%</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-800 text-xs">
+                    <div>
+                        <span class="text-[11px] text-slate-400 block">보유 수량</span>
+                        <span class="font-black text-white text-sm">{acc['shares']} 주</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[11px] text-slate-400 block">현재가 (USD)</span>
+                        <span class="font-black text-white text-sm">${acc['price']:,.2f}</span>
+                    </div>
+                    <div>
+                        <span class="text-[11px] text-slate-400 block">평균 매입단가</span>
+                        <span class="font-bold text-slate-300 text-xs">${acc['avg_price']:,.2f}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[11px] text-slate-400 block">수익률</span>
+                        <span class="font-bold text-rose-400 text-xs">+{acc['profit_pct']:,.2f}%</span>
+                    </div>
+                </div>
+
+                <div class="mts-subcard rounded-xl p-3 mt-3 flex items-center justify-between text-xs">
+                    <div>
+                        <span class="text-[10px] text-slate-400 block">평가 금액</span>
+                        <span class="font-extrabold text-white text-sm">₩{acc['eval_krw']:,.0f}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] text-slate-400 block">평가 손익 (USD)</span>
+                        <span class="font-bold text-rose-400 text-xs">+${acc['profit_usd']:,.2f}</span>
+                    </div>
                 </div>
             </div>
             """
@@ -584,46 +821,8 @@ def render_multi_account_html(accounts, output_path="index.html"):
                 </div>
             </div>
 
-            <!-- 보유 종목 카드 -->
-            <div class="mts-card rounded-2xl p-4 shadow-lg">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5">
-                        <span class="font-extrabold text-white text-base">{acc['target_ticker']}</span>
-                        <span class="text-[11px] text-slate-400">{acc['target_name']}</span>
-                    </div>
-                    <span class="text-xs font-bold text-indigo-400">비중 {acc['stock_ratio']:.1f}%</span>
-                </div>
-
-                <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-800 text-xs">
-                    <div>
-                        <span class="text-[11px] text-slate-400 block">보유 수량</span>
-                        <span class="font-black text-white text-sm">{acc['shares']} 주</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[11px] text-slate-400 block">현재가 (USD)</span>
-                        <span class="font-black text-white text-sm">${acc['price']:,.2f}</span>
-                    </div>
-                    <div>
-                        <span class="text-[11px] text-slate-400 block">평균 매입단가</span>
-                        <span class="font-bold text-slate-300 text-xs">${acc['avg_price']:,.2f}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[11px] text-slate-400 block">수익률</span>
-                        <span class="font-bold text-rose-400 text-xs">+{acc['profit_pct']:,.2f}%</span>
-                    </div>
-                </div>
-
-                <div class="mts-subcard rounded-xl p-3 mt-3 flex items-center justify-between text-xs">
-                    <div>
-                        <span class="text-[10px] text-slate-400 block">평가 금액</span>
-                        <span class="font-extrabold text-white text-sm">₩{acc['eval_krw']:,.0f}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-[10px] text-slate-400 block">평가 손익 (USD)</span>
-                        <span class="font-bold text-rose-400 text-xs">+${acc['profit_usd']:,.2f}</span>
-                    </div>
-                </div>
-            </div>
+            <!-- 보유 종목 카드 (단일 or 하이브리드) -->
+            {stock_cards_html}
 
             <!-- 최근 체결 내역 카드 -->
             <div class="mts-card rounded-2xl p-4 shadow-lg">
@@ -903,7 +1102,7 @@ def main():
     acc_tqqq = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="TQQQ",
-        target_name="ProShares UltraPro QQQ",
+        target_name="ProShares UltraPro QQQ (3X)",
         account_id="tqqq",
         account_num="112-92-****01",
         account_title="위탁종합 (나스닥 3X)",
@@ -938,22 +1137,24 @@ def main():
         max_buy_krw=None
     )
 
-    # 4) 계좌 4: QQQ -> QQQI (나스닥 1X 월배당, 2024-03-04 시작, 원금 500만원, 상한 룰 제외: max_buy_krw=None)
+    # 4) 계좌 4: QQQ -> QQQI (코어) + TQQQ (하락장 레버리지 매수 전술), 2024-03-04 시작, 원금 500만원
     acc_qqqi = run_quant_strategy(
         signal_ticker="QQQ",
         target_ticker="QQQI",
-        target_name="NEOS Nasdaq-100 High Income ETF",
+        target_name="NEOS Nasdaq-100 High Income",
         account_id="qqqi",
         account_num="112-92-****04",
-        account_title="위탁종합 (나스닥 월배당)",
+        account_title="위탁종합 (QQQI + TQQQ 하락장 전술)",
         start_date="2024-03-04",
         initial_krw=5_000_000.0,
-        max_buy_krw=None
+        max_buy_krw=2_500_000.0,
+        dip_ticker="TQQQ",
+        dip_name="ProShares UltraPro QQQ (3X)"
     )
 
     # 5) 멀티 계좌 MTS HTML 생성
     render_multi_account_html([acc_tqqq, acc_soxl, acc_qld, acc_qqqi], "index.html")
-    print("\n[SUCCESS] TQQQ, SOXL, QLD, QQQI 멀티 계좌 대시보드 빌드 성공!")
+    print("\n[SUCCESS] TQQQ, SOXL, QLD, QQQI 하이브리드 멀티 계좌 대시보드 빌드 성공!")
 
 
 if __name__ == "__main__":
